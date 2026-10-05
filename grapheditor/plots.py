@@ -1,4 +1,3 @@
-# plots.py
 import tkinter as tk
 import numpy as np
 import matplotlib as mpl

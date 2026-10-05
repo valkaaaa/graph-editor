@@ -1,6 +1,5 @@
-# app.pyw — точка входа GraphEditor Pro
-import os
-import sys
+import os, sys
+from narwhals._compliant import window
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PKG  = os.path.join(ROOT, 'grapheditor')
@@ -23,8 +22,7 @@ def main():
 
     import tkinter as tk
     from tkinterdnd2 import TkinterDnD
-    import main as app_module
-    AdvancedGraphEditorApp = app_module.AdvancedGraphEditorApp
+    from grapheditor.main import AdvancedGraphEditorApp
 
     root = TkinterDnD.Tk()
 
@@ -46,7 +44,7 @@ def main():
             root._icon_ref = _icon
         except Exception as e: pass
     else:
-        print(f"[icon] файл не найден")
+        pass
 
     app = AdvancedGraphEditorApp(root)
     root.mainloop()

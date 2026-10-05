@@ -33,10 +33,10 @@ class AdvancedGraphEditorApp(
     DocumentsMixin,
     AutosaveMixin,
 ):
-    def __init__(self, root):
+    def __init__(self, root, geometry="1250x1250", title="GraphEditor Pro v1.2.0"):
         self.root = root
-        self.root.title("GraphEditor Pro v1.3.0")
-        self.root.geometry("1250x760")
+        self.root.title(title)
+        self.root.geometry(geometry)
 
         # ---------- Данные ----------
         self.graphs_data = []
