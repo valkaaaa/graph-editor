@@ -1,0 +1,371 @@
+# GraphEditor Pro
+
+**Продвинутый графический редактор для научной визуализации с поддержкой 100+ типов графиков, анимаций, тем и мультиязычного интерфейса.**
+
+![Version](https://img.shields.io/badge/version-1.4.0-blue)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+GraphEditor Pro — настольное приложение на Python + Tkinter + Matplotlib для быстрого построения и оформления графиков без написания кода. Подходит для научных отчётов, презентаций, обучения и инженерных задач.
+
+---
+
+## Содержание
+
+- [Возможности](#возможности)
+- [Установка](#установка)
+- [Быстрый старт](#быстрый-старт)
+- [Типы графиков](#типы-графиков)
+- [Форматы файлов](#форматы-файлов)
+- [Горячие клавиши](#горячие-клавиши)
+- [Скриншоты](#скриншоты)
+- [Структура проекта](#структура-проекта)
+- [Разработка](#разработка)
+- [Лицензия](#лицензия)
+
+---
+
+## Возможности
+
+### Графики
+- **Более 100 типов**: от классических линий и столбцов до диаграмм Санкей, хордовых, дендрограмм, тепловых карт, 3D-поверхностей и аэрологических диаграмм.
+- **3D-графики**: линии, точечные, столбчатые, поверхности, сетки, полигоны, триангуляция, изоповерхности, поверхность Римана.
+- **Статистические**: Box plot, Violin, Strip, Ridge, Raincloud, Beanplot, Swarm, Q-Q, ECDF, гистограммы, ECDF.
+- **Сетевые и иерархические**: Network, Chord, Sankey, Alluvial, Tree, Hive, Arc, Radial Tree, Dendrogram, Circle Packing, Adjacency Matrix.
+- **Радиотехника**: Боде, Смита, Найквиста, корневой годограф, созвездие.
+- **ML/биоинформатика**: Volcano, ROC, Manhattan, MA, Mapper (упрощённый).
+- **2D-поля**: Stream plot, Streamlines, Quiver, 3D Quiver.
+- **Финансовые**: свечи OHLC, Renko, Point-and-Figure, водопад, диаграмма Парето.
+- **Мультисетка**: до 3×3 подграфиков на документ, каждый объект — в свою ячейку.
+
+### Редактирование и анализ
+- Вторая ось Y (справа) для каждого объекта.
+- Заливка под кривой и свечение для точек.
+- Сглаживание (скользящее среднее).
+- Единицы измерения для осей X / Y / Z.
+- Статистика по выбранному объекту: n, min, max, mean, median, std, var, Q1, Q3, IQR, сумма, корреляция.
+- Аппроксимации: линейная, полиномиальная, экспоненциальная, логарифмическая, степенная; показ R² и RMSE.
+- Автоматический поиск пиков (`scipy.signal.find_peaks`).
+- Перетаскивание точек мышью (drag points).
+- Tooltip и crosshair на холсте.
+- Undo / Redo (до 50 шагов настраиваемо).
+- Папки для организации объектов, поиск по дереву объектов.
+
+### Анимации
+14 готовых типов: волна, растущий столбец, спираль, пульсация, маятник, двойной маятник, аттрактор Лоренца, эпициклоид, бегущие частицы, клеточный автомат (Conway), морфинг функций, тепловая карта, вращение 3D, а также собственные функции 2D/3D.
+
+- Пауза / старт / стоп.
+- Экспорт в **GIF** (через `pillow`) и **MP4** (через `imageio-ffmpeg`).
+- Сохранение конфигурации в `.graphxanim`.
+
+### Оформление
+- **14 встроенных тем**: Light, Dark, Solarized Light/Dark, Nord, Dracula, Gruvbox, Monokai, One Dark, Tokyo Night, Catppuccin Mocha/Latte, GitHub Light/Dark.
+- **Создание собственных тем** через редактор с предпросмотром.
+- **Палитры цветов** для групповой раскраски объектов: `tab10`, `tab20`, `Set1–3`, `Paired`, `Dark2`, `Pastel1`, `viridis`, `plasma`, `inferno`, `magma`, `cividis`, `coolwarm`, `RdYlGn`.
+- Настройка шрифтов отдельно для заголовка, осей, легенды, делений.
+- Толщина осей, цвет по умолчанию, толщина линий.
+
+### Мультиязычность
+20 языков: 🇷🇺 Русский, 🇬🇧 English, 🇩🇪 Deutsch, 🇫🇷 Français, 🇪🇸 Español, 🇵🇹 Português, 🇮🇹 Italiano, 🇻🇳 Tiếng Việt, 🇹🇭 ไทย, 🇨🇳 中文, 🇯🇵 日本語, 🇰🇷 한국어, 🇸🇦 العربية, 🇮🇳 हिन्दी, 🇺🇦 Українська, 🇧🇾 Беларуская, 🇸🇮 Slovenščina, 🇵🇱 Polski, 🇰🇿 Қазақша, 🇺🇿 Oʻzbekcha.
+
+### Документы и автосохранение
+- **Мультидокументность**: несколько вкладок, каждая со своим набором графиков.
+- **Автосохранение** каждые 60 секунд в `~/.grapheditor/autosave.graphxtemp`.
+- Восстановление после аварийного закрытия.
+- Недавние файлы (15 позиций).
+- **Проекты** `.graphx` (zip-контейнер с manifest, графиками, настройками и превью).
+
+### Экспорт
+| Формат | Что сохраняет |
+|---|---|
+| `.json` | Все объекты активного документа |
+| `.zip` | JSON + PNG-превью + настройки |
+| `.graphx` | Полный проект (zip с manifest) |
+| `.graphxtpl` | Шаблон (для повторного применения) |
+| `.graphxanim` | Конфигурация анимации + превью |
+| `.png` / `.svg` / `.pdf` | Холст в высоком DPI |
+| `.html` | Интерактивный HTML через Plotly |
+| `.csv` | Все данные в CSV |
+| `.xlsx` | Excel, один лист на объект |
+| `.py` | **Готовый Python-скрипт** с matplotlib-кодом |
+
+**Экспорт PDF** с выбором размера страницы (A3/A4/A5/Letter/Legal), ориентации, отступов, DPI и прозрачного фона.
+
+### Импорт
+`.json`, `.zip`, `.csv`, `.xlsx`, `.graphx`, `.graphxtpl`, `.graphxanim`, `.graphxtemp` — перетаскиванием (drag-and-drop) или через меню.
+
+### Производительность
+- Индикатор в статус-баре: время отрисовки, число точек, число объектов.
+- Валидация данных и защита от NaN/Inf при построении.
+
+### Прочее
+- Встроенная **Python-консоль** (`Ctrl+\``) с доступом к `app`, `np`, `plt`, `mpl`, `tr`.
+- **Поиск по объектам** (`Ctrl+F`).
+- **Обучение при первом запуске** (интерактивный тур).
+- **Горячие клавиши** для всех основных действий.
+- **Индикатор производительности** в реальном времени.
+- **Экспорт Python-кода** — можно забрать график в свой скрипт/ноутбук.
+
+---
+
+## Установка
+
+### Требования
+- **Python 3.10+** (рекомендуется 3.11 или 3.12).
+- Tk (обычно идёт в комплекте с Python; на Linux может понадобиться `sudo apt install python3-tk`).
+
+### Способ 1: из исходников
+
+```bash
+git clone https://github.com/valkaaaa/graph-editor.git
+cd graph-editor
+
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux / macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+# или
+pip install -e .
+```
+
+Запуск:
+
+```bash
+python app.pyw
+# или после установки:
+grapheditor
+```
+
+### Способ 2: готовая сборка
+
+Скачайте установщик со страницы [Releases](https://github.com/valkaaaa/graph-editor/releases) и запустите. Python не требуется.
+
+---
+
+## Быстрый старт
+
+1. Запустите приложение (`python app.pyw`).
+2. На вкладке **«Создание»** выберите тип графика.
+3. Введите данные:
+   - вручную (`1, 2, 3, 4`),
+   - из буфера обмена (`Ctrl+V` из Excel),
+   - кнопкой **«Таблица...»** — удобный редактор с импортом из Excel,
+   - через вкладку **«Генератор»** — по формуле или случайными числами.
+4. Настройте внешний вид (цвет, толщину, маркер) и нажмите **«Создать»**.
+5. Управляйте объектами на вкладке **«Объекты»**: редактировать, дублировать, удалять, группировать по папкам.
+6. Анализируйте данные на вкладке **«Статистика»**: описательные метрики, аппроксимации, поиск пиков.
+7. Экспортируйте результат через меню **Файл** → PNG/SVG/PDF/HTML/Python/Excel.
+
+> 💡 **Совет:** перетащите `.csv`, `.xlsx`, `.json` или `.graphx` прямо в окно приложения — файл откроется автоматически.
+
+---
+
+## Типы графиков
+
+Полный список — в файле [TYPES.md](TYPES.md). Примеры данных — в [EXAMPLES.md](EXAMPLES.md).
+
+Кратко по категориям:
+
+| Категория | Примеры |
+|---|---|
+| 2D базовые | Линия, Точечная, Столбчатая, Гистограмма, Круговая, Step plot |
+| 2D продвинутые | Box plot, Violin, Heatmap, Contour, Imshow, Polygon |
+| Статистические | Q-Q, ECDF, Ridge, Strip, Raincloud, Beanplot, Swarm, Cherry Blossom, Dot-and-Whisker |
+| Финансовые | Свечи OHLC, Renko, Point-and-Figure, Водопад, Парето |
+| Проектные | Гант, Воронка, Пулевая, Pyramid, Slopegraph, Dumbbell, Bump |
+| Сетевые | Network, Chord, Sankey, Alluvial, Hive, Arc, Tree, Radial Tree |
+| Иерархические | Dendrogram, Cluster Dendrogram, Circle Packing, Adjacency Matrix, Treemap, Sunburst |
+| Поля | Stream plot, Streamlines, Quiver, 3D Quiver |
+| Радиотехника | Bode, Smith, Nyquist, Root locus, Constellation |
+| ML/научные | Volcano, ROC, Manhattan, MA, Mapper, Recurrence, Cobweb, Poincaré, Phase portrait |
+| Метео/гео | Skew-T log-P, Thermodynamic, Wind rose, Hodograph, Choropleth, Cartogram, Isopleth, Dot density |
+| Геометрия | Voronoi, Convex hull, Alpha shape |
+| 3D | 3D Линия, 3D Точечная, 3D Столбчатая, 3D Гистограмма, 3D Круговая, 3D Поверхность, 3D Сетка, 3D Полигон, 3D Триангуляция, Ribbon 3D, Waterfall 3D, Riemann surface 3D, Joyplot 3D, Isosurface 3D |
+| Специальные | Sparkline, Cycle plot, Calendar heatmap, Polar heatmap, Bifurcation, Parallel coordinates, Radar, Gauge |
+
+---
+
+## Форматы файлов
+
+| Расширение | Назначение |
+|---|---|
+| `.graphx` | Полный проект (zip-контейнер) |
+| `.graphxtpl` | Шаблон данных и стиля |
+| `.graphxanim` | Конфигурация анимации |
+| `.graphxtemp` | Автосохранение (создаётся автоматически) |
+| `.json` | Объекты активного документа |
+| `.zip` | JSON + превью + настройки |
+| `.csv` | Данные таблицей |
+| `.xlsx` | Excel, один лист на объект |
+| `.png` / `.svg` / `.pdf` | Изображение холста |
+| `.html` | Интерактивный HTML (Plotly) |
+| `.py` | Готовый Python-скрипт |
+
+---
+
+## Горячие клавиши
+
+### Файлы
+| Клавиши | Действие |
+|---|---|
+| `Ctrl+S` | Сохранить JSON |
+| `Ctrl+Shift+S` | Сохранить как… |
+| `Ctrl+O` | Открыть JSON |
+| `Ctrl+P` | Сохранить как изображение |
+| `Ctrl+E` | Экспорт в Excel |
+| `Ctrl+F` | Поиск по объектам |
+
+### Правка
+| Клавиши | Действие |
+|---|---|
+| `Ctrl+Z` | Отменить |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Повторить |
+| `Ctrl+D` | Дублировать выбранное |
+| `Ctrl+Shift+N` | Очистить всё |
+| `Delete` | Удалить выбранное |
+
+### Документы
+| Клавиши | Действие |
+|---|---|
+| `Ctrl+N` / `Ctrl+T` | Новый документ |
+| `Ctrl+W` | Закрыть документ |
+| `Ctrl+Tab` | Следующий документ |
+| `Ctrl+Shift+Tab` | Предыдущий документ |
+
+### Прочее
+| Клавиши | Действие |
+|---|---|
+| `Ctrl+\`` | Python-консоль |
+| `F5` | Перерисовать |
+| `F11` | Полный экран |
+| `Esc` | Закрыть диалог |
+
+---
+
+## Скриншоты
+
+| Создание | Статистика |
+|---|---|
+| _добавьте screenshot-creation.png_ | _добавьте screenshot-stats.png_ |
+
+| 3D-графики | Тёмная тема |
+|---|---|
+| _добавьте screenshot-3d.png_ | _добавьте screenshot-dark.png_ |
+
+> 📷 Скриншоты можно положить в `assets/screenshots/` и сослаться сюда: `![alt](assets/screenshots/name.png)`.
+
+---
+
+## Структура проекта
+
+```
+graph-editor/
+├── app.pyw                 # точка входа
+├── pyproject.toml          # метаданные, зависимости, entry point
+├── requirements.txt        # альтернативный список зависимостей
+├── README.md               # этот файл
+├── EXAMPLES.md             # примеры данных для всех типов
+├── TYPES.md                # полный список типов графиков
+├── .gitignore
+├── .python-version         # 3.12 / 3.11 / 3.10
+│
+├── assets/
+│   ├── icon.ico
+│   ├── icon.png
+│   └── icons/              # иконки тулбара
+│
+└── grapheditor/            # основной пакет
+    ├── __init__.py         # __version__, __author__
+    ├── main.py             # AdvancedGraphEditorApp + main()
+    ├── ui.py               # интерфейс, меню, диалоги, консоль
+    ├── plots.py            # построение всех типов графиков
+    ├── animations.py       # 14 типов анимаций
+    ├── templates.py        # встроенные и пользовательские шаблоны
+    ├── themes.py           # 14 встроенных + пользовательские темы
+    ├── documents.py        # мультидокументность (вкладки)
+    ├── autosave.py         # автосохранение
+    ├── palettes.py         # палитры цветов (новое)
+    ├── code_export.py      # экспорт в Python-скрипт (новое)
+    ├── pdf_export.py       # экспорт PDF с настройкой страницы (новое)
+    ├── translator.py       # i18n (20 языков)
+    ├── settings.py         # константы, ToolTip, единицы
+    ├── config.py           # загрузка/сохранение настроек
+    └── logging_setup.py    # логирование ошибок
+```
+
+---
+
+## Разработка
+
+### Зависимости
+Все — в `pyproject.toml` и `requirements.txt`:
+
+| Пакет | Назначение |
+|---|---|
+| `numpy`, `matplotlib` | ядро построения графиков |
+| `tkinterdnd2` | drag-and-drop файлов |
+| `pillow` | GIF-анимации, иконки |
+| `imageio-ffmpeg` | MP4-анимации |
+| `openpyxl` | Excel |
+| `plotly` | интерактивный HTML |
+| `scipy` | статистика, аппроксимации, пики, дендрограммы |
+| `networkx` | сетевые графы |
+
+### Установка для разработки
+
+```bash
+pip install -e ".[dev]"
+pre-commit install        # опционально
+```
+
+### Проверка кода
+
+```bash
+ruff check .
+ruff format --check .
+pytest                    # если добавите tests/
+```
+
+### Сборка `.exe` (Windows)
+
+```bash
+pip install -e ".[build]"
+pyinstaller --noconfirm --windowed --icon=assets/icon.ico \
+    --name=GraphEditorPro --add-data "assets;assets" app.pyw
+```
+
+> `.spec`-файл рекомендуется хранить в репозитории для воспроизводимости сборки.
+
+### Добавление нового типа графика
+
+1. Добавьте ID типа в `translator.py::INTERNAL_TYPES` и ключ перевода в `TYPE_TO_KEY`.
+2. Добавьте `elif t == "Мой новый тип":` в `plots.py::_create_artist` — рисует и возвращает `artist`.
+3. Добавьте разбор данных в `plots.py::_add_graph` (какие поля формы читать).
+4. Добавьте отображение полей в `plots.py::_on_type_change`.
+5. (Опционально) Добавьте экспорт в `code_export.py::_emit_object_code`.
+6. (Опционально) Добавьте HTML-экспорт в `plots.py::_export_html`.
+
+### Добавление языка
+
+1. В `translator.py::TRANSLATIONS` добавьте новый ключ (например, `'cs'`) и скопируйте словарь `en`.
+2. Переведите значения.
+3. В `SUPPORTED_LANGS` добавьте `('cs', 'Čeština')`.
+4. Проверьте: `python -c "from grapheditor.translator import TRANSLATIONS; print(len(TRANSLATIONS['cs']))"` — должно совпадать с `ru`.
+
+---
+
+## Лицензия
+
+Проект распространяется под лицензией **MIT**. См. файл [LICENSE](LICENSE).
+
+---
+
+## Автор
+
+**valkaa** — [github.com/valkaaaa](https://github.com/valkaaaa)
+
+Нашли ошибку или есть идея? Создайте [Issue](https://github.com/valkaaaa/graph-editor/issues) или присылайте Pull Request.
