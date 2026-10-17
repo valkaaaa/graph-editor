@@ -16,7 +16,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "GraphEditorPro.1.2.0")
+                "GraphEditorPro.1.4.0")
         except Exception:
             pass
 

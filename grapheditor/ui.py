@@ -241,7 +241,25 @@ class UIMixin:
                                   accelerator="Ctrl+`", command=self._open_console)
         self.filemenu.add_command(label=tr.t('menu.file.tour'), command=self._start_onboarding)
         self.filemenu.add_separator()
-        self.filemenu.add_command(label=tr.t('menu.file.settings'), command=self._open_settings)
+        self.filemenu.add_command(label=tr.t('menu.file.export_pdf'),
+                                  command=self.export_pdf)
+        self.filemenu.add_command(label=tr.t('menu.file.export_python'),
+                                  command=self.export_python_code)
+        self.filemenu.add_separator()
+        self.filemenu.add_command(label=tr.t('menu.file.settings'),
+                                  command=self._open_settings)
+        # === НЕДАВНИЕ ФАЙЛЫ ===
+        self.filemenu.add_separator()
+        self.recent_menu = Menu(self.filemenu, tearoff=0)
+        self.filemenu.add_cascade(label=tr.t('menu.file.recent'),
+                                  menu=self.recent_menu)
+        self._rebuild_recent_menu()
+        # === НЕДАВНИЕ ===
+        self.filemenu.add_separator()
+        self.recent_menu = Menu(self.filemenu, tearoff=0)
+        self.filemenu.add_cascade(label=tr.t('menu.file.recent'),
+                                  menu=self.recent_menu)
+        self._rebuild_recent_menu()
 
         # Правка
         self.editmenu = Menu(self.menubar, tearoff=0)
@@ -253,9 +271,27 @@ class UIMixin:
         self.editmenu.add_separator()
         self.editmenu.add_command(label=tr.t('menu.edit.duplicate'),
                                   accelerator="Ctrl+D", command=self._duplicate_graph)
-        self.editmenu.add_command(label=tr.t('menu.edit.notes'), command=self._edit_notes)
+        self.editmenu.add_command(label=tr.t('menu.edit.notes'),
+                                  command=self._edit_notes)
         self.editmenu.add_separator()
-        self.editmenu.add_command(label=tr.t('menu.edit.clear_all'), command=self._clear_all)
+        # === ПАЛИТРЫ ===
+        palette_menu = Menu(self.editmenu, tearoff=0)
+        try:
+            from grapheditor.palettes import PALETTES
+        except ImportError:
+            from palettes import PALETTES
+        for key, label in PALETTES.items():
+            palette_menu.add_command(
+                label=label,
+                command=lambda k=key: self._apply_palette(k))
+        self.editmenu.add_cascade(label=tr.t('menu.edit.palette'),
+                                  menu=palette_menu)
+        self.editmenu.add_command(
+            label=tr.t('menu.edit.palette_dialog'),
+            command=self._show_palette_dialog)
+        self.editmenu.add_separator()
+        self.editmenu.add_command(label=tr.t('menu.edit.clear_all'),
+                                  command=self._clear_all)
 
         # Шаблоны
         self.templatemenu = Menu(self.menubar, tearoff=0)
@@ -302,7 +338,6 @@ class UIMixin:
         self.viewmenu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=tr.t('menu.view'), menu=self.viewmenu)
         for key, var, cmd in [
-            ('menu.view.grid', self.show_grid_var, self._update_grid),
             ('menu.view.legend', self.show_legend_var, self._update_legend),
             ('menu.view.axes', self.show_axes_var, self._update_axes),
         ]:
@@ -824,6 +859,19 @@ class UIMixin:
         # Объекты
         tab_list = ttk.Frame(self.notebook, padding=5)
         self.notebook.add(tab_list, text=tr.t('tab.objects'))
+
+        # === ПОИСК ПО ОБЪЕКТАМ ===
+        search_row = ttk.Frame(tab_list)
+        search_row.pack(fill=tk.X, pady=(0, 5))
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_row, textvariable=self.search_var)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.search_var.trace_add('write',
+                                  lambda *_: self._update_listbox())
+        ttk.Button(search_row, text='✕', width=3,
+                   command=lambda: self.search_var.set('')
+                   ).pack(side=tk.RIGHT, padx=(3, 0))
+
         tree_frame = ttk.Frame(tab_list)
         tree_frame.pack(fill=tk.BOTH, expand=True)
         self.graph_tree = ttk.Treeview(tree_frame, show='tree', height=12,
@@ -1002,6 +1050,7 @@ class UIMixin:
 
         statusbar = ttk.Frame(self.root, relief=tk.SUNKEN)
         statusbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.perf_var = tk.StringVar(value='')
         ttk.Label(statusbar, textvariable=self.status_var, anchor=tk.W,
                   padding=(5, 2)).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Separator(statusbar, orient=tk.VERTICAL).pack(
@@ -1013,6 +1062,9 @@ class UIMixin:
                                   command=self._open_console)
         console_btn.pack(side=tk.RIGHT, padx=5, pady=1)
         attach_tooltip(console_btn, "Открыть Python-консоль (Ctrl+`)")
+        ttk.Label(statusbar, textvariable=self.perf_var,
+                  anchor=tk.E, padding=(5, 2),
+                  foreground="#888").pack(side=tk.RIGHT, padx=5)
 
     # ========================================================================
     # ИСТОРИЯ / ШРИФТЫ / ХОТКЕИ
@@ -1066,6 +1118,7 @@ class UIMixin:
         b('<F5>', lambda e: self._redraw())
         b('<F11>', lambda e: self._toggle_fullscreen())
         b('<Delete>', self._on_delete_key)
+        b('<Control-f>', lambda e: self._focus_search())
 
     def _build_documents_bar(self, parent):
         bar = ttk.Frame(parent)
@@ -1139,7 +1192,9 @@ class UIMixin:
             menu.add_command(label=tr.t('ctx.group_lw', count=len(selection)),
                               command=self._group_change_lw)
             menu.add_command(label=tr.t('ctx.group_ms', count=len(selection)),
-                              command=self._group_change_ms)
+                             command=self._group_change_ms)
+            menu.add_command(label=tr.t('ctx.group_palette'),
+                             command=self._show_palette_dialog)
             menu.add_separator()
             menu.add_command(label=tr.t('ctx.group_move', count=len(selection)),
                               command=self._move_to_folder)
@@ -1706,8 +1761,29 @@ class UIMixin:
             if lang_changed:
                 self._switch_lang(new_lang)
 
-        ttk.Button(win, text=tr.t('settings.save'),
-                    command=save).pack(pady=15)
+        def do_reset():
+            if not messagebox.askyesno(
+                    tr.t('msg.confirm'),
+                    tr.t('settings.reset_confirm')):
+                return
+            try:
+                from config import reset_config
+            except ImportError:
+                from grapheditor.config import reset_config
+            if not reset_config():
+                messagebox.showerror(tr.t('msg.error'),
+                                     tr.t('settings.reset_error'))
+                return
+            win.destroy()
+            messagebox.showinfo(tr.t('msg.info'),
+                                tr.t('settings.reset_done'))
+
+        footer = ttk.Frame(win, padding=(10, 15))
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Button(footer, text=tr.t('settings.reset'),
+                   command=do_reset).pack(side=tk.LEFT)
+        ttk.Button(footer, text=tr.t('settings.save'),
+                   command=save).pack(side=tk.RIGHT)
 
     # ========================================================================
     # КОНСОЛЬ
@@ -1925,3 +2001,79 @@ class UIMixin:
 
     def _finish_onboarding(self):
         self._show_history(tr.t('status.tour_finished'))
+
+    # ========================================================================
+    # НЕДАВНИЕ ФАЙЛЫ
+    # ========================================================================
+    def _push_recent(self, path):
+        try:
+            if not hasattr(self, '_recent_files'):
+                self._recent_files = []
+            path = os.path.abspath(path)
+            if path in self._recent_files:
+                self._recent_files.remove(path)
+            self._recent_files.insert(0, path)
+            self._recent_files = self._recent_files[:15]
+            self._rebuild_recent_menu()
+        except Exception:
+            pass
+
+    def _rebuild_recent_menu(self):
+        if not hasattr(self, 'recent_menu'):
+            return
+        self.recent_menu.delete(0, 'end')
+        valid = [p for p in getattr(self, '_recent_files', [])
+                 if os.path.exists(p)]
+        if not valid:
+            self.recent_menu.add_command(
+                label=tr.t('menu.file.recent_empty'), state='disabled')
+            return
+        for p in valid:
+            self.recent_menu.add_command(
+                label=os.path.basename(p),
+                command=lambda path=p: self._open_recent(path))
+        self.recent_menu.add_separator()
+        self.recent_menu.add_command(
+            label=tr.t('menu.file.recent_clear'),
+            command=self._clear_recent)
+
+    def _clear_recent(self):
+        self._recent_files = []
+        self._save_config()
+        self._rebuild_recent_menu()
+
+    def _open_recent(self, path):
+        if not os.path.exists(path):
+            messagebox.showwarning(tr.t('msg.warning'),
+                                   tr.t('msg.file_not_found'))
+            return
+        ext = os.path.splitext(path)[1].lower()
+        dispatch = {
+            '.json': self._load_json,
+            '.zip': self._load_zip,
+            '.graphx': self._load_graphx,
+            '.csv': self._import_csv,
+            '.xlsx': self._import_excel,
+            '.xls': self._import_excel,
+            '.graphxtpl': self._import_template_file,
+            '.graphxanim': self._load_graphxanim,
+            '.graphxtemp': lambda p: self._load_autosave(p),
+        }
+        fn = dispatch.get(ext)
+        if fn:
+            fn(path)
+
+    # ========================================================================
+    # ПОИСК В ДЕРЕВЕ
+    # ========================================================================
+    def _focus_search(self):
+        for w in self.notebook.winfo_children():
+            for child in w.winfo_children():
+                try:
+                    if isinstance(child, ttk.Entry) and \
+                            str(child.cget('textvariable')) == str(self.search_var):
+                        child.focus_set()
+                        return
+                except Exception:
+                    pass
+

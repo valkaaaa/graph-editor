@@ -1,20 +1,25 @@
 # GraphEditor Pro — зависимости
-# Установка: pip install -r requirements.txt
-# Python 3.10-3.12
+# Python 3.9+
 
-# --- Обязательные ---
+# --- Ядро ---
 numpy>=1.24
 matplotlib>=3.7
-tkinterdnd2>=0.3.0
 
-# --- Для экспорта в интерактивный HTML ---
+# --- GUI ---
+tkinterdnd2>=0.4
+
+# --- Иконки, GIF, MP4 ---
+pillow>=10.0
+imageio-ffmpeg>=0.5
+
+# --- Excel ---
+openpyxl>=3.1
+
+# --- Интерактивный HTML ---
 plotly>=5.18
 
-# --- Для сохранения анимаций в GIF ---
-pillow>=10.0
+# --- Статистика, аппроксимации, пики, Q-Q, дендрограмма ---
+scipy>=1.11
 
-# --- Для сохранения анимаций в MP4 ---
-imageio-ffmpeg>=0.4.9
-
-scipy
-openpyxl>=3.1
+# --- Сетевой график ---
+networkx>=3.0

@@ -1,3 +1,4 @@
+# plots.py
 import tkinter as tk
 import numpy as np
 import matplotlib as mpl
@@ -22,7 +23,7 @@ class PlotsMixin:
     # ========================================================================
     # ХОЛСТ
     # ========================================================================
-    def _setup_plot(self, parent=None):                       # [NEW] parent
+    def _setup_plot(self, parent=None):
         parent = parent if parent is not None else self.plot_frame
         self.fig = plt.figure(figsize=(8, 5))
         self.axes = []
@@ -35,6 +36,7 @@ class PlotsMixin:
         self._style_axes()
         self._init_tooltip()
         self._init_crosshair()
+        self._apply_grid_to_axes(self.axes)
         self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
         self.canvas.draw()
         self.toolbar = NavigationToolbar2Tk(self.canvas, parent)
@@ -66,6 +68,19 @@ class PlotsMixin:
                 if hasattr(ax, 'get_zlim'):
                     ax.set_zlabel("Z")
 
+    def _apply_grid_to_axes(self, axes, state=None):
+        """Применяет состояние сетки к указанным осям.
+        Использует xaxis.grid / yaxis.grid — они корректно работают
+        с False и не выдают UserWarning."""
+        if state is None:
+            state = self.show_grid_var.get()
+        for ax in axes or []:
+            try:
+                ax.xaxis.grid(state, linestyle='--', alpha=0.6)
+                ax.yaxis.grid(state, linestyle='--', alpha=0.6)
+            except Exception:
+                pass
+
     def _parse_data(self, text):
         if not text or not text.strip():
             return []
@@ -88,10 +103,15 @@ class PlotsMixin:
     # ПРОЕКЦИИ
     # ========================================================================
     def _projection_for_type(self, t):
-        if t in ("Радиальная", "Полярный scatter"):
+        if t in ("Радиальная", "Полярный scatter",
+                 "Полярная теплокарта", "Роза ветров"):
             return 'polar'
         if "3D" in t:
             return '3d'
+        if t in ("Chord", "Smith chart", "Сетевой график",
+                 "Hive plot", "Arc diagram", "Дерево (tree diagram)",
+                 "Circle packing", "Adjacency matrix"):
+            return '2d'
         return '2d'
 
     def _ensure_correct_axes_dimension(self, needs_3d):
@@ -130,11 +150,13 @@ class PlotsMixin:
         self._style_axes()
         self._init_tooltip()
         self._init_crosshair()
+        self._apply_grid_to_axes(self.axes)
         if projection == '2d':
             self.graphs_data = [
                 d for d in self.graphs_data
                 if "3D" not in d['type'] and d['type'] not in
-                ("Радиальная", "Полярный scatter")
+                ("Радиальная", "Полярный scatter",
+                 "Полярная теплокарта", "Роза ветров")
             ]
         elif projection == '3d':
             self.graphs_data = [d for d in self.graphs_data
@@ -147,19 +169,54 @@ class PlotsMixin:
         self.canvas.draw()
 
     def _remove_artist(self, artist):
+        """Удаляет один artist, контейнер matplotlib или список artists."""
         if artist is None:
             return
+
+        # Наши контейнеры — итерируем. Делаем это ДО hasattr('remove'),
+        # потому что у list есть свой .remove(x), который тут не нужен.
+        if isinstance(artist, (list, tuple)):
+            for a in artist:
+                self._remove_artist(a)
+            return
+
         if isinstance(artist, dict):
             for a in artist.values():
                 self._remove_artist(a)
-        elif isinstance(artist, (list, tuple)):
-            for a in artist:
-                self._remove_artist(a)
-        else:
+            return
+
+        # Обычный matplotlib-artist или контейнер (BarContainer,
+        # ErrorbarContainer, Colorbar и пр.) — у них есть .remove()
+        if hasattr(artist, 'remove'):
             try:
                 artist.remove()
             except Exception:
                 pass
+
+    def _destroy_object(self, data):
+        """Полностью удаляет объект: главный artist + доп. artists
+        + сброс настроек осей (xticks, yticks, invert, grid)."""
+        if not isinstance(data, dict):
+            self._remove_artist(data)
+            return
+
+        # Главный artist
+        self._remove_artist(data.get('artist'))
+
+        # Дополнительные artists (fill_between, errorbar, glow, colorbar,
+        # Total-бар в водопаде, стрелки в sankey/chord и т.д.)
+        for extra in data.get('_extra_artists', []) or []:
+            self._remove_artist(extra)
+        data['_extra_artists'] = []
+
+        # Коллбек для сброса настроек осей
+        cleanup = data.get('_cleanup')
+        if callable(cleanup):
+            try:
+                cleanup()
+            except Exception:
+                pass
+        data['_cleanup'] = None
 
     # ========================================================================
     # SUBPLOTS
@@ -186,7 +243,9 @@ class PlotsMixin:
         self.axes_secondary = {}
         self.fig.clear()
         needs_3d = any("3D" in d['type'] for d in self.graphs_data)
-        needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter")
+        needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter",
+                                         "Полярная теплокарта",
+                                         "Роза ветров")
                           for d in self.graphs_data)
         proj_kw = {}
         if needs_3d:
@@ -203,6 +262,7 @@ class PlotsMixin:
         self._style_axes()
         self._init_tooltip()
         self._init_crosshair()
+        self._apply_grid_to_axes(self.axes)
         for d in self.graphs_data:
             if d.get('subplot_index', 0) >= len(self.axes):
                 d['subplot_index'] = 0
@@ -234,6 +294,10 @@ class PlotsMixin:
         fill = data.get('fill', False)
         glow = data.get('glow', False)
 
+        # Сбрасываем возможные старые ссылки
+        data['_extra_artists'] = []
+        data['_cleanup'] = None
+
         if self.smooth_var.get() and t in ("Линия", "Точечная", "Столбчатая"):
             try:
                 y = self._smooth(y, self.settings['smooth_window']).tolist()
@@ -259,34 +323,55 @@ class PlotsMixin:
         if t == "Линия":
             artist, = target_ax.plot(x, y, label=lbl, color=c, lw=lw,
                                      ls=ls, marker=marker, markersize=ms)
+            extra = []
             if fill:
                 try:
-                    target_ax.fill_between(x, y, alpha=0.3, color=c)
+                    fb = target_ax.fill_between(x, y, alpha=0.3, color=c)
+                    extra.append(fb)
                 except Exception:
                     pass
             if yerr:
-                target_ax.errorbar(x, y, yerr=yerr, fmt='none',
-                                   ecolor=c, capsize=3)
+                try:
+                    eb = target_ax.errorbar(x, y, yerr=yerr, fmt='none',
+                                            ecolor=c, capsize=3)
+                    extra.append(eb)
+                except Exception:
+                    pass
+            data['_extra_artists'] = extra
+
         elif t == "Столбчатая":
             artist = target_ax.bar(x, y, label=lbl, color=c,
                                    yerr=yerr, capsize=3)
+
         elif t == "Гистограмма":
             edge = 'white' if self.dark_mode_var.get() else 'black'
             _, _, patches = target_ax.hist(
                 x, bins=data.get('bins', 10), color=c, label=lbl,
                 alpha=0.75, edgecolor=edge)
             artist = list(patches)
+
         elif t == "Точечная":
+            extra = []
             if glow:
-                target_ax.scatter(x, y, s=ms ** 2 * 6, color=c,
-                                  alpha=0.10, zorder=1)
-                target_ax.scatter(x, y, s=ms ** 2 * 3, color=c,
-                                  alpha=0.25, zorder=2)
+                try:
+                    g1 = target_ax.scatter(x, y, s=ms ** 2 * 6, color=c,
+                                            alpha=0.10, zorder=1)
+                    g2 = target_ax.scatter(x, y, s=ms ** 2 * 3, color=c,
+                                            alpha=0.25, zorder=2)
+                    extra.extend([g1, g2])
+                except Exception:
+                    pass
             artist = target_ax.scatter(x, y, label=lbl, color=c,
                                        s=ms ** 2, marker=marker, zorder=3)
             if yerr:
-                target_ax.errorbar(x, y, yerr=yerr, fmt='none',
-                                   ecolor=c, capsize=3)
+                try:
+                    eb = target_ax.errorbar(x, y, yerr=yerr, fmt='none',
+                                            ecolor=c, capsize=3)
+                    extra.append(eb)
+                except Exception:
+                    pass
+            data['_extra_artists'] = extra
+
         elif t == "Круговая":
             pc = [cc for cc in data.get('pie_colors', [])
                   if mcolors.is_color_like(cc)]
@@ -312,6 +397,7 @@ class PlotsMixin:
             for b in bp['boxes']:
                 b.set_facecolor(c)
             artist = bp
+
         elif t == "Violin":
             groups = data.get('box_data', [])
             if not groups:
@@ -321,6 +407,7 @@ class PlotsMixin:
                 b.set_facecolor(c)
                 b.set_alpha(0.75)
             artist = vp
+
         elif t in ("Heatmap", "Contour", "Imshow"):
             raw = data.get('heatmap_data', [])
             if not raw:
@@ -386,7 +473,7 @@ class PlotsMixin:
             except Exception:
                 return None
 
-        # ------------------- [NEW] Водопад -------------------
+        # ------------------- Водопад -------------------
         elif t == "Водопад":
             vals = np.array(y, dtype=float)
             n = len(vals)
@@ -399,13 +486,16 @@ class PlotsMixin:
             bars = base_ax.bar(xs, vals, bottom=starts,
                                color=colors_w, edgecolor='white',
                                label=lbl)
+            extra = []
             for i in range(n - 1):
                 y_lvl = cumulative[i]
-                base_ax.plot([xs[i] + 0.4, xs[i + 1] - 0.4],
-                             [y_lvl, y_lvl],
-                             color='#888', lw=1, ls='--')
-            base_ax.bar([n], [cumulative[-1]], color='#3498db',
-                        edgecolor='white', label='Total')
+                ln, = base_ax.plot([xs[i] + 0.4, xs[i + 1] - 0.4],
+                                   [y_lvl, y_lvl],
+                                   color='#888', lw=1, ls='--')
+                extra.append(ln)
+            total = base_ax.bar([n], [cumulative[-1]], color='#3498db',
+                                edgecolor='white', label='Total')
+            extra.append(total)
             labels = data.get('pie_labels') or []
             ticks = list(xs) + [n]
             if labels and len(labels) >= n:
@@ -414,9 +504,19 @@ class PlotsMixin:
                 ticklabels = [str(i) for i in range(n)] + ['Total']
             base_ax.set_xticks(ticks)
             base_ax.set_xticklabels(ticklabels, rotation=30, ha='right')
+
+            def _cleanup(_ax=base_ax):
+                try:
+                    _ax.set_xticks([])
+                    _ax.set_xticklabels([])
+                except Exception:
+                    pass
+
+            data['_extra_artists'] = extra
+            data['_cleanup'] = _cleanup
             artist = bars
 
-        # ------------------- [NEW] Гант -------------------
+        # ------------------- Гант -------------------
         elif t == "Гант":
             starts = np.array(x, dtype=float)
             durations = np.array(y, dtype=float)
@@ -441,6 +541,21 @@ class PlotsMixin:
             base_ax.set_yticklabels(labels)
             base_ax.invert_yaxis()
             base_ax.grid(True, axis='x', ls='--', alpha=0.5)
+
+            def _cleanup(_ax=base_ax):
+                try:
+                    _ax.set_yticks([])
+                    _ax.set_yticklabels([])
+                    _ax.invert_yaxis()
+                    _ax.xaxis.grid(self.show_grid_var.get(),
+                                   linestyle='--', alpha=0.6)
+                    _ax.yaxis.grid(self.show_grid_var.get(),
+                                   linestyle='--', alpha=0.6)
+                except Exception:
+                    pass
+
+            data['_extra_artists'] = []
+            data['_cleanup'] = _cleanup
             artist = bars
 
         elif t == "Кольцевая":
@@ -453,6 +568,7 @@ class PlotsMixin:
                 y, labels=data['pie_labels'] or None,
                 colors=pc, autopct='%1.1f%%',
                 wedgeprops=dict(width=0.4, edgecolor='white')))
+
         elif t == "Вложенная круговая":
             rings = data.get('box_data', [])
             if not rings:
@@ -477,6 +593,7 @@ class PlotsMixin:
                                      wedgeprops=wp)
                 all_artists.append(w_)
             artist = all_artists
+
         elif t == "Мозаика":
             rows = data.get('box_data', [])
             if len(rows) < 2:
@@ -513,6 +630,7 @@ class PlotsMixin:
             base_ax.set_xticks([])
             base_ax.set_yticks([])
             artist = artists
+
         elif t == "Радиальная":
             if not x or not y:
                 return None
@@ -525,6 +643,7 @@ class PlotsMixin:
                                      edgecolor='white')
             except Exception:
                 return None
+
         elif t == "Полярный scatter":
             if not x or not y:
                 return None
@@ -540,6 +659,7 @@ class PlotsMixin:
                     edgecolors='black', linewidths=0.5)
             except Exception:
                 return None
+
         elif t == "Пузырьковая":
             sizes = np.array(data.get('z', []), dtype=float)
             if len(sizes) == 0 or len(x) != len(sizes):
@@ -557,6 +677,7 @@ class PlotsMixin:
                     label=lbl, zorder=3)
             except Exception:
                 return None
+
         elif t == "Quiver":
             U = np.array(data.get('z', []), dtype=float)
             V = np.array(data.get('yerr', []), dtype=float)
@@ -570,6 +691,7 @@ class PlotsMixin:
                     scale=1, color=c, width=0.005, label=lbl)
             except Exception:
                 return None
+
         elif t == "Столбчатая с накоплением":
             series = data.get('box_data', [])
             if not series:
@@ -594,6 +716,7 @@ class PlotsMixin:
                 artists.append(bars)
                 bottom[:min_len] += s_arr[:min_len]
             artist = artists
+
         elif t in ("Treemap", "Sunburst"):
             txt = base_ax.text(
                 0.5, 0.5,
@@ -604,8 +727,4716 @@ class PlotsMixin:
                           ec='gray', alpha=0.7))
             artist = txt
 
-        # ----- 3D -----
+        # ------------------- Свечи (OHLC) -------------------
+        elif t == "Свечи (OHLC)":
+            groups = data.get('box_data', [])
+            if len(groups) < 4:
+                base_ax.text(0.5, 0.5,
+                             'Нужны 4 серии OHLC (Open;High;Low;Close)',
+                             transform=base_ax.transAxes,
+                             ha='center', va='center', color='red')
+                return None
+            o = np.array(groups[0], dtype=float)
+            h = np.array(groups[1], dtype=float)
+            l_ = np.array(groups[2], dtype=float)
+            cl = np.array(groups[3], dtype=float)
+            n = min(len(o), len(h), len(l_), len(cl))
+            if n == 0:
+                return None
+            o, h, l_, cl = o[:n], h[:n], l_[:n], cl[:n]
+            xs = np.arange(n)
+
+            artists = []
+            # Фитили
+            for i in range(n):
+                color_i = '#2ecc71' if cl[i] >= o[i] else '#e74c3c'
+                wick, = base_ax.plot([i, i], [l_[i], h[i]],
+                                     color=color_i, lw=1.0, zorder=2)
+                artists.append(wick)
+
+            # Тела
+            width = 0.6
+            for i in range(n):
+                color_i = '#2ecc71' if cl[i] >= o[i] else '#e74c3c'
+                bottom = min(o[i], cl[i])
+                height = abs(cl[i] - o[i]) or 0.001
+                rect = plt.Rectangle(
+                    (i - width / 2, bottom), width, height,
+                    facecolor=color_i, edgecolor='black',
+                    linewidth=0.5, zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+
+            x_labels = x[:n] if len(x) >= n else xs
+            base_ax.set_xticks(xs)
+            try:
+                base_ax.set_xticklabels([str(v) for v in x_labels],
+                                        rotation=30, ha='right')
+            except Exception:
+                pass
+            base_ax.set_xlim(-0.7, n - 0.3)
+            base_ax.grid(True, axis='y', ls='--', alpha=0.4)
+            artist = artists
+            data['_extra_artists'] = []
+
+        # ------------------- Диаграмма Парето -------------------
+        elif t == "Диаграмма Парето":
+            if not x or not y:
+                return None
+            y_arr = np.array(y, dtype=float)
+            x_arr = list(x)
+            n = min(len(x_arr), len(y_arr))
+            if n < 1:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+            order = np.argsort(-y_arr)
+            y_sorted = y_arr[order]
+            x_sorted = [x_arr[i] for i in order]
+            xs = np.arange(len(y_sorted))
+
+            bars = base_ax.bar(xs, y_sorted, color=c,
+                               edgecolor='white', label=lbl)
+            base_ax.set_xticks(xs)
+            try:
+                base_ax.set_xticklabels(
+                    [str(v) for v in x_sorted], rotation=30, ha='right')
+            except Exception:
+                pass
+
+            ax2 = base_ax.twinx()
+            cumsum = np.cumsum(y_sorted)
+            total = cumsum[-1] if cumsum[-1] != 0 else 1
+            cum_pct = cumsum / total * 100.0
+            line, = ax2.plot(xs, cum_pct, 'o-', color='red',
+                             lw=lw, markersize=max(3, ms))
+            ax2.set_ylim(0, 105)
+            ax2.set_ylabel('Накопленный %', color='red')
+            try:
+                ax2.tick_params(axis='y', labelcolor='red')
+            except Exception:
+                pass
+            eighty = ax2.axhline(80, color='gray', lw=0.8, ls='--')
+
+            def _cleanup(_ax2=ax2):
+                try:
+                    _ax2.remove()
+                except Exception:
+                    pass
+
+            data['_extra_artists'] = [line, eighty]
+            data['_cleanup'] = _cleanup
+            artist = bars
+
+        # ------------------- Step plot -------------------
+        elif t == "Step plot":
+            artist, = base_ax.step(x, y, where='post',
+                                    color=c, lw=lw, ls=ls,
+                                    label=lbl)
+
+        # ------------------- Renko -------------------
+        elif t == "Renko":
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 2:
+                return None
+            brick = float(data.get('bins', 0) or 0)
+            if brick <= 0:
+                rng_val = np.max(y_arr) - np.min(y_arr)
+                brick = rng_val / 20 if rng_val > 0 else 1.0
+
+            bricks = []
+            cur = float(y_arr[0])
+            col = 0
+            for price in y_arr[1:]:
+                guard = 0
+                while abs(price - cur) >= brick and guard < 10000:
+                    guard += 1
+                    if price > cur:
+                        bricks.append((col, cur, cur + brick, 1))
+                        cur = cur + brick
+                    else:
+                        bricks.append((col, cur, cur - brick, -1))
+                        cur = cur - brick
+                    col += 1
+
+            if not bricks:
+                base_ax.text(0.5, 0.5,
+                             f'Мало движения (кирпич = {brick:.4g})',
+                             transform=base_ax.transAxes,
+                             ha='center', va='center', color='orange')
+                return None
+
+            artists = []
+            for idx, op, cl_, direction in bricks:
+                color_i = '#2ecc71' if direction > 0 else '#e74c3c'
+                bottom = min(op, cl_)
+                height = abs(cl_ - op)
+                rect = plt.Rectangle(
+                    (idx - 0.4, bottom), 0.8, height,
+                    facecolor=color_i, edgecolor='black',
+                    linewidth=0.5, zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+
+            base_ax.set_xlim(-1, len(bricks))
+            base_ax.grid(True, axis='y', ls='--', alpha=0.4)
+            base_ax.set_xlabel(f"Кирпич = {brick:.4g}")
+            artist = artists[0]
+            data['_extra_artists'] = artists[1:]
+
+        # ------------------- Point-and-Figure -------------------
+        elif t == "Point-and-Figure":
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 2:
+                return None
+            box = float(data.get('bins', 0) or 0)
+            if box <= 0:
+                rng_val = np.max(y_arr) - np.min(y_arr)
+                box = rng_val / 20 if rng_val > 0 else 1.0
+
+            columns = []
+            last_level = int(np.floor(y_arr[0] / box))
+            col_dir = None
+            col_levels = [last_level]
+
+            for price in y_arr[1:]:
+                lvl = int(np.floor(price / box))
+                guard = 0
+                while lvl != last_level and guard < 10000:
+                    guard += 1
+                    if lvl > last_level:
+                        if col_dir == -1:
+                            columns.append((col_dir, col_levels))
+                            col_dir = 1
+                            last_level += 1
+                            col_levels = [last_level]
+                        else:
+                            if col_dir is None:
+                                col_dir = 1
+                            last_level += 1
+                            col_levels.append(last_level)
+                    else:
+                        if col_dir == 1:
+                            columns.append((col_dir, col_levels))
+                            col_dir = -1
+                            last_level -= 1
+                            col_levels = [last_level]
+                        else:
+                            if col_dir is None:
+                                col_dir = -1
+                            last_level -= 1
+                            col_levels.append(last_level)
+            if col_levels:
+                columns.append((col_dir, col_levels))
+
+            if not columns:
+                return None
+
+            artists = []
+            for col_idx, (direction, levels) in enumerate(columns):
+                color_i = '#2ecc71' if direction == 1 else '#e74c3c'
+                mark = 'X' if direction == 1 else 'O'
+                for lvl in levels:
+                    t_lbl = base_ax.text(
+                        col_idx, lvl * box, mark,
+                        ha='center', va='center',
+                        color=color_i, fontsize=10,
+                        fontweight='bold', zorder=4)
+                    artists.append(t_lbl)
+
+            base_ax.set_xticks(range(len(columns)))
+            base_ax.set_xlim(-1, len(columns))
+            base_ax.grid(True, ls='--', alpha=0.3)
+            base_ax.set_ylabel(f"Клетка = {box:.4g}")
+            artist = artists[0]
+            data['_extra_artists'] = artists[1:]
+
+        # ------------------- Q-Q plot -------------------
+        elif t == "Q-Q plot":
+            try:
+                from scipy import stats as _stats
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 3:
+                return None
+            try:
+                (osm, osr), (slope, intercept, r) = _stats.probplot(
+                    y_arr, dist="norm", fit=True)
+            except Exception:
+                return None
+            pts = base_ax.plot(osm, osr, marker, color=c,
+                                markersize=ms, alpha=0.7,
+                                linestyle='none', label=lbl)[0]
+            x_line = np.array([osm[0], osm[-1]])
+            y_line = slope * x_line + intercept
+            line, = base_ax.plot(x_line, y_line, '--',
+                                 color='red', lw=lw,
+                                 label=f"R² = {r**2:.4f}")
+            base_ax.set_xlabel("Теоретические квантили")
+            base_ax.set_ylabel("Выборочные квантили")
+            data['_extra_artists'] = [line]
+            artist = pts
+
+        # ------------------- ECDF -------------------
+        elif t == "ECDF":
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 1:
+                return None
+            y_sorted = np.sort(y_arr)
+            xs = np.concatenate([[y_sorted[0]], y_sorted])
+            ys = np.concatenate([[0],
+                                  np.arange(1, len(y_sorted) + 1)
+                                  / len(y_sorted)])
+            artist, = base_ax.step(xs, ys, where='post',
+                                    color=c, lw=lw, ls=ls, label=lbl)
+            base_ax.set_ylim(0, 1.05)
+            base_ax.set_ylabel("P(X ≤ x)")
+
+        # ------------------- Hexbin -------------------
+        elif t == "Hexbin":
+            x_arr = np.array(x, dtype=float)
+            y_arr = np.array(y, dtype=float)
+            n = min(len(x_arr), len(y_arr))
+            if n < 3:
+                return None
+            gridsize = int(data.get('bins', 30))
+            gridsize = max(3, min(200, gridsize))
+            extra = []
+            try:
+                hb = base_ax.hexbin(
+                    x_arr[:n], y_arr[:n],
+                    gridsize=gridsize,
+                    cmap=data.get('cmap', 'viridis'),
+                    mincnt=1)
+                if data.get('show_colorbar', True):
+                    cb = base_ax.figure.colorbar(hb, ax=base_ax)
+                    extra.append(cb)
+            except Exception:
+                return None
+            data['_extra_artists'] = extra
+            artist = hb
+
+        # ------------------- Strip plot -------------------
+        elif t == "Strip plot":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            rng = np.random.default_rng(42)
+            artists = []
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) == 0:
+                    continue
+                jitter = rng.normal(0, 0.06, size=len(g_arr))
+                sc = base_ax.scatter(
+                    np.full_like(g_arr, i, dtype=float) + jitter,
+                    g_arr, alpha=0.6, color=c, s=ms ** 2,
+                    edgecolors='black', linewidths=0.4,
+                    label=lbl if i == 0 else None,
+                    zorder=3)
+                artists.append(sc)
+            labels = data.get('pie_labels', [])
+            base_ax.set_xticks(range(len(groups)))
+            if labels and len(labels) == len(groups):
+                base_ax.set_xticklabels(labels)
+            base_ax.set_xlim(-0.5, len(groups) - 0.5)
+            artist = artists
+
+        # ------------------- Ridge plot (Joyplot) -------------------
+        elif t == "Ridge plot":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            try:
+                from scipy.stats import gaussian_kde
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            labels = data.get('pie_labels', [])
+            artists = []
+            n = len(groups)
+            all_vals = np.concatenate(
+                [np.array(g, dtype=float) for g in groups
+                 if len(g) > 1])
+            if len(all_vals) == 0:
+                return None
+            xmin, xmax = np.nanmin(all_vals), np.nanmax(all_vals)
+            pad = (xmax - xmin) * 0.1 or 1.0
+            xs = np.linspace(xmin - pad, xmax + pad, 400)
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) < 2:
+                    continue
+                try:
+                    kde = gaussian_kde(g_arr)
+                    ys = kde(xs)
+                except Exception:
+                    continue
+                ys = ys / ys.max() * 0.7
+                offset = (n - 1 - i) * 1.0
+                color_i = c if i == 0 else None
+                fill = base_ax.fill_between(
+                    xs, offset, offset + ys,
+                    color=color_i, alpha=0.75,
+                    edgecolor='white', linewidth=0.8,
+                    label=lbl if i == 0 else None)
+                artists.append(fill)
+                ln, = base_ax.plot(xs, offset + ys,
+                                    color='#333', lw=0.8)
+                artists.append(ln)
+                if labels and i < len(labels):
+                    base_ax.text(xmin - pad * 0.5, offset + 0.15,
+                                 labels[i], ha='right', va='bottom',
+                                 fontsize=9)
+                else:
+                    base_ax.text(xmin - pad * 0.5, offset + 0.15,
+                                 f"Группа {i+1}",
+                                 ha='right', va='bottom', fontsize=9)
+            base_ax.set_yticks([])
+            try:
+                base_ax.spines['left'].set_visible(False)
+            except Exception:
+                pass
+            base_ax.set_ylim(-0.2, n + 0.3)
+            artist = artists
+
+        # ------------------- Raincloud plot -------------------
+        elif t == "Raincloud plot":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            try:
+                from scipy.stats import gaussian_kde
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            labels = data.get('pie_labels', [])
+            n = len(groups)
+            rng = np.random.default_rng(42)
+            artists = []
+            half = 0.35
+
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) < 2:
+                    continue
+                try:
+                    kde = gaussian_kde(g_arr)
+                except Exception:
+                    continue
+                ys = np.linspace(g_arr.min(), g_arr.max(), 200)
+                xs_dens = kde(ys)
+                xs_dens = xs_dens / xs_dens.max() * half
+
+                # Half violin слева
+                fill = base_ax.fill_betweenx(
+                    ys, i - xs_dens, i, color=c, alpha=0.6,
+                    label=lbl if i == 0 else None)
+                artists.append(fill)
+                edge, = base_ax.plot(i - xs_dens, ys, color=c, lw=0.8)
+                artists.append(edge)
+
+                # Box plot справа
+                q1 = np.percentile(g_arr, 25)
+                q2 = np.percentile(g_arr, 50)
+                q3 = np.percentile(g_arr, 75)
+                iqr = q3 - q1
+                w_lo = max(g_arr.min(), q1 - 1.5 * iqr)
+                w_hi = min(g_arr.max(), q3 + 1.5 * iqr)
+                box_center = i + 0.15
+                box_w = 0.08
+                rect = plt.Rectangle(
+                    (box_center - box_w / 2, q1),
+                    box_w, q3 - q1,
+                    facecolor='white', edgecolor='black',
+                    linewidth=0.8, zorder=4)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+                med, = base_ax.plot(
+                    [box_center - box_w / 2, box_center + box_w / 2],
+                    [q2, q2],
+                    color='black', lw=1.2, zorder=5)
+                artists.append(med)
+                for w_end, w_start in ((w_lo, q1), (w_hi, q3)):
+                    wl, = base_ax.plot(
+                        [box_center, box_center],
+                        [w_start, w_end],
+                        color='black', lw=0.6)
+                    artists.append(wl)
+
+                # Strip plot снизу-справа
+                jitter = rng.normal(0, 0.05, size=len(g_arr))
+                sc = base_ax.scatter(
+                    np.full_like(g_arr, i + 0.35) + jitter,
+                    g_arr, s=ms ** 2 * 0.5, color=c,
+                    alpha=0.7, edgecolors='none', zorder=3)
+                artists.append(sc)
+
+                if labels and i < len(labels):
+                    t_lbl = base_ax.text(
+                        i, g_arr.min() - 0.05, labels[i],
+                        ha='center', va='top', fontsize=9)
+                    artists.append(t_lbl)
+
+            base_ax.set_xticks([])
+            base_ax.set_xlim(-0.7, n - 0.3)
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Beanplot -------------------
+        elif t == "Beanplot":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            try:
+                from scipy.stats import gaussian_kde
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            rng = np.random.default_rng(42)
+            artists = []
+
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) < 2:
+                    continue
+                try:
+                    kde = gaussian_kde(g_arr)
+                except Exception:
+                    continue
+                ys = np.linspace(g_arr.min(), g_arr.max(), 200)
+                dens = kde(ys)
+                max_d = dens.max() if dens.max() > 0 else 1.0
+                dens = dens / max_d * 0.4
+
+                # Зеркальная плотность
+                fill = base_ax.fill_betweenx(
+                    ys, i - dens, i + dens,
+                    color=c, alpha=0.5)
+                artists.append(fill)
+                edge_l, = base_ax.plot(i - dens, ys,
+                                        color=c, lw=0.8)
+                edge_r, = base_ax.plot(i + dens, ys,
+                                        color=c, lw=0.8)
+                artists.extend([edge_l, edge_r])
+
+                # Точки внутри
+                jitter = rng.uniform(-0.05, 0.05,
+                                      size=len(g_arr))
+                sc = base_ax.scatter(
+                    np.full_like(g_arr, i) + jitter, g_arr,
+                    s=max(4, ms * 0.5),
+                    color='black', alpha=0.5, zorder=3)
+                artists.append(sc)
+
+                # Среднее — красная линия
+                mean_val = float(np.mean(g_arr))
+                mean_ln, = base_ax.plot(
+                    [i - 0.4, i + 0.4],
+                    [mean_val, mean_val],
+                    color='red', lw=2.0, zorder=4)
+                artists.append(mean_ln)
+
+            labels = data.get('pie_labels', [])
+            base_ax.set_xticks(range(len(groups)))
+            if labels and len(labels) == len(groups):
+                base_ax.set_xticklabels(labels)
+            base_ax.set_xlim(-0.5, len(groups) - 0.5)
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Swarm plot -------------------
+        elif t == "Swarm plot":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            labels = data.get('pie_labels', [])
+            artists = []
+
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) == 0:
+                    continue
+                sorted_vals = np.sort(g_arr)
+                y_range = sorted_vals.max() - sorted_vals.min()
+                if y_range == 0:
+                    y_range = 1.0
+                point_diameter_y = y_range / 40
+                max_width = 0.4
+                placed = []
+                for v in sorted_vals:
+                    candidates = [0.0]
+                    for step in range(1, 30):
+                        candidates.append(step * 0.04)
+                        candidates.append(-step * 0.04)
+                    placed_x = 0.0
+                    for cx in candidates:
+                        ok = True
+                        for (px, py) in placed:
+                            if (abs(px - cx) < 0.06 and
+                                    abs(py - v) < point_diameter_y):
+                                ok = False
+                                break
+                        if ok:
+                            placed_x = cx
+                            break
+                    placed.append((placed_x, v))
+
+                xs_pts = np.array([i + p[0] for p in placed])
+                ys_pts = np.array([p[1] for p in placed])
+                sc = base_ax.scatter(
+                    xs_pts, ys_pts,
+                    s=max(15, ms ** 2 * 0.6),
+                    color=c, alpha=0.7,
+                    edgecolors='white', linewidths=0.4,
+                    zorder=3,
+                    label=lbl if i == 0 else None)
+                artists.append(sc)
+
+                med = float(np.median(g_arr))
+                med_line, = base_ax.plot(
+                    [i - 0.4, i + 0.4], [med, med],
+                    color='black', lw=1.5, zorder=4)
+                artists.append(med_line)
+
+            base_ax.set_xticks(range(len(groups)))
+            if labels and len(labels) == len(groups):
+                base_ax.set_xticklabels(labels)
+            base_ax.set_xlim(-0.5, len(groups) - 0.5)
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Cherry blossom plot -------------------
+        elif t == "Cherry blossom plot":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            labels = data.get('pie_labels', [])
+            artists = []
+            cmap_c = plt.get_cmap('spring')
+
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) == 0:
+                    continue
+                qs = [0, 5, 10, 25, 50, 75, 90, 95, 100]
+                q_vals = [float(np.percentile(g_arr, q)) for q in qs]
+                median = q_vals[4]
+                stem, = base_ax.plot(
+                    [i, i], [q_vals[0], q_vals[-1]],
+                    color='#5a3a1a', lw=1.5, zorder=1)
+                artists.append(stem)
+                for q_idx, qv in enumerate(q_vals):
+                    dist = abs(q_idx - 4)
+                    w = max(0.05, 0.35 - dist * 0.05)
+                    color_i = cmap_c(dist / 4.0)
+                    line, = base_ax.plot(
+                        [i - w, i + w], [qv, qv],
+                        color=color_i, lw=3.0,
+                        solid_capstyle='round',
+                        alpha=0.85, zorder=3)
+                    artists.append(line)
+                med_line, = base_ax.plot(
+                    [i - 0.4, i + 0.4], [median, median],
+                    color='#c0392b', lw=3.5,
+                    solid_capstyle='round',
+                    zorder=4,
+                    label=lbl if i == 0 else None)
+                artists.append(med_line)
+
+            base_ax.set_xticks(range(len(groups)))
+            if labels and len(labels) == len(groups):
+                base_ax.set_xticklabels(labels)
+            base_ax.set_xlim(-0.5, len(groups) - 0.5)
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Dot-and-whisker -------------------
+        elif t == "Dot-and-whisker":
+            groups = data.get('box_data', [])
+            if not groups:
+                return None
+            labels = data.get('pie_labels', [])
+            artists = []
+
+            for i, g in enumerate(groups):
+                g_arr = np.array(g, dtype=float)
+                g_arr = g_arr[np.isfinite(g_arr)]
+                if len(g_arr) == 0:
+                    continue
+                q1 = float(np.percentile(g_arr, 25))
+                q2 = float(np.percentile(g_arr, 50))
+                q3 = float(np.percentile(g_arr, 75))
+                gmin = float(g_arr.min())
+                gmax = float(g_arr.max())
+
+                whisk, = base_ax.plot(
+                    [i, i], [gmin, gmax],
+                    color='#888', lw=1.0, zorder=1)
+                artists.append(whisk)
+                iqr_ln, = base_ax.plot(
+                    [i, i], [q1, q3],
+                    color='black', lw=3.0,
+                    solid_capstyle='round', zorder=2)
+                artists.append(iqr_ln)
+                for gv in (gmin, gmax):
+                    cap, = base_ax.plot(
+                        [i - 0.08, i + 0.08], [gv, gv],
+                        color='#888', lw=1.0, zorder=1)
+                    artists.append(cap)
+                dot = base_ax.scatter(
+                    [i], [q2],
+                    s=max(80, ms ** 2 * 5),
+                    color=c, edgecolors='black',
+                    linewidths=1.0, zorder=3,
+                    label=lbl if i == 0 else None)
+                artists.append(dot)
+
+            base_ax.set_xticks(range(len(groups)))
+            if labels and len(labels) == len(groups):
+                base_ax.set_xticklabels(labels)
+            base_ax.set_xlim(-0.5, len(groups) - 0.5)
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Сезонная декомпозиция -------------------
+        elif t == "Сезонная декомпозиция":
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 4:
+                return None
+            period = max(2, int(data.get('bins', 12)))
+            if period >= len(y_arr):
+                period = max(2, len(y_arr) // 2)
+
+            window = period if period % 2 == 1 else period + 1
+            kernel = np.ones(window) / window
+            trend = np.convolve(y_arr, kernel, mode='same')
+            half = window // 2
+            trend[:half] = np.nan
+            trend[-half:] = np.nan
+
+            detrended = y_arr - trend
+            seasonal = np.full_like(y_arr, np.nan)
+            for phase in range(period):
+                vals = [detrended[j] for j in range(phase, len(y_arr), period)
+                        if np.isfinite(detrended[j])]
+                if vals:
+                    mean_val = np.mean(vals)
+                    for j in range(phase, len(y_arr), period):
+                        seasonal[j] = mean_val
+
+            residual = y_arr - trend - seasonal
+
+            xs = (x if len(x) == len(y_arr) else np.arange(len(y_arr)))
+            l_orig, = base_ax.plot(
+                xs, y_arr, '-', color=c, lw=lw,
+                label=f"{lbl or 'Ряд'} (наблюдения)")
+            l_trend, = base_ax.plot(
+                xs, trend, '-', color='red', lw=lw,
+                label='Тренд')
+            l_seas, = base_ax.plot(
+                xs, seasonal, '-', color='green', lw=lw,
+                label='Сезонность')
+            l_res, = base_ax.plot(
+                xs, residual, '-', color='purple',
+                lw=max(0.6, lw * 0.7),
+                label='Остаток')
+            try:
+                base_ax.legend(fontsize=8)
+            except Exception:
+                pass
+            data['_extra_artists'] = [l_trend, l_seas, l_res]
+            artist = l_orig
+
+        # ------------------- Rolling statistics -------------------
+        elif t == "Rolling statistics":
+            y_arr = np.array(y, dtype=float)
+            if len(y_arr) < 2:
+                return None
+            window = max(2, int(data.get('bins', 5)))
+            window = min(window, len(y_arr))
+
+            kernel = np.ones(window) / window
+            y_mean = np.convolve(y_arr, kernel, mode='same')
+
+            y_std = np.zeros_like(y_arr)
+            for i in range(len(y_arr)):
+                lo = max(0, i - window // 2)
+                hi = min(len(y_arr), i + window // 2 + 1)
+                y_std[i] = np.nanstd(y_arr[lo:hi])
+
+            xs = (x if len(x) == len(y_arr) else np.arange(len(y_arr)))
+
+            l_orig, = base_ax.plot(
+                xs, y_arr, '-', color=c,
+                lw=max(0.6, lw * 0.5), alpha=0.5,
+                label=f"{lbl or 'Сигнал'}")
+            fill = base_ax.fill_between(
+                xs, y_mean - y_std, y_mean + y_std,
+                color=c, alpha=0.25,
+                label=f"±σ (окно {window})")
+            l_mean, = base_ax.plot(
+                xs, y_mean, '-', color='red', lw=lw,
+                label=f"Среднее (окно {window})")
+            try:
+                base_ax.legend(fontsize=8)
+            except Exception:
+                pass
+            data['_extra_artists'] = [l_orig, fill]
+            artist = l_mean
+
+        # ------------------- Дендрограмма -------------------
+        elif t == "Дендрограмма":
+            try:
+                from scipy.cluster.hierarchy import (
+                    linkage, dendrogram as _dendro)
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            raw = data.get('heatmap_data', [])
+            if not raw or len(raw) < 2:
+                base_ax.text(0.5, 0.5, 'Нужна матрица ≥2×N',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            row_lens = [len(r) for r in raw if r]
+            if not row_lens or len(set(row_lens)) != 1:
+                base_ax.text(0.5, 0.5, 'Все строки одной длины',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            Z = np.array(raw, dtype=float)
+            lines_before = set(id(ln) for ln in base_ax.lines)
+            texts_before = set(id(tx) for tx in base_ax.texts)
+            colls_before = set(id(cl) for cl in base_ax.collections)
+            labels = data.get('pie_labels') or None
+            try:
+                _dendro(Z, ax=base_ax,
+                        labels=labels,
+                        color_threshold=0,
+                        leaf_rotation=45)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Dendrogram error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            new_artists = []
+            for ln in base_ax.lines:
+                if id(ln) not in lines_before:
+                    new_artists.append(ln)
+            for tx in base_ax.texts:
+                if id(tx) not in texts_before:
+                    new_artists.append(tx)
+            for cl in base_ax.collections:
+                if id(cl) not in colls_before:
+                    new_artists.append(cl)
+            if new_artists:
+                artist = new_artists[0]
+                data['_extra_artists'] = new_artists[1:]
+            else:
+                artist = None
+            try:
+                base_ax.set_ylabel("Расстояние")
+            except Exception:
+                pass
+
+        # ------------------- Cluster dendrogram -------------------
+        elif t == "Cluster dendrogram":
+            try:
+                from scipy.cluster.hierarchy import (
+                    linkage, dendrogram as _dendro,
+                    leaves_list as _leaves)
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            raw = data.get('heatmap_data', [])
+            if not raw or len(raw) < 2:
+                return None
+            row_lens = [len(r) for r in raw if r]
+            if not row_lens or len(set(row_lens)) != 1:
+                return None
+            Z = np.array(raw, dtype=float)
+
+            try:
+                row_link = linkage(Z, method='average')
+                col_link = linkage(Z.T, method='average')
+            except Exception:
+                return None
+
+            row_order = _leaves(row_link)
+            col_order = _leaves(col_link)
+            Z_ord = Z[np.ix_(row_order, col_order)]
+
+            im = base_ax.imshow(Z_ord, cmap='viridis', aspect='auto')
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+
+            try:
+                from mpl_toolkits.axes_grid1 import make_axes_locatable
+                divider = make_axes_locatable(base_ax)
+                ax_top = divider.append_axes("top", size="25%",
+                                              pad=0.05, sharex=base_ax)
+                ax_left = divider.append_axes("left", size="25%",
+                                               pad=0.05,
+                                               sharey=base_ax)
+                _dendro(col_link, ax=ax_top, no_labels=True,
+                        color_threshold=0)
+                _dendro(row_link, ax=ax_left, orientation='left',
+                        no_labels=True, color_threshold=0)
+                ax_top.set_xticks([]); ax_top.set_yticks([])
+                ax_left.set_xticks([]); ax_left.set_yticks([])
+                for sp in ('top', 'right', 'bottom', 'left'):
+                    try:
+                        ax_top.spines[sp].set_visible(False)
+                        ax_left.spines[sp].set_visible(False)
+                    except Exception:
+                        pass
+
+                def _cleanup(_top=ax_top, _left=ax_left):
+                    try: _top.remove()
+                    except Exception: pass
+                    try: _left.remove()
+                    except Exception: pass
+                data['_cleanup'] = _cleanup
+            except Exception:
+                pass
+
+            try:
+                cb = base_ax.figure.colorbar(im, ax=base_ax,
+                                              shrink=0.7, pad=0.1)
+                data['_extra_artists'] = [cb]
+            except Exception:
+                pass
+            artist = im
+
+        # ------------------- Sankey -------------------
+        elif t == "Sankey":
+            try:
+                from matplotlib.sankey import Sankey
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'Sankey unavailable',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            vals = np.array(y, dtype=float)
+            if len(vals) < 2:
+                return None
+            labels = data.get('pie_labels') or \
+                [f'F{i+1}' for i in range(len(vals))]
+            input_val = abs(vals[0]) or 1.0
+            outputs = np.abs(vals[1:])
+            out_sum = outputs.sum()
+            if out_sum > 0:
+                outputs = outputs / out_sum * input_val
+            flows = [input_val] + (-outputs).tolist()
+            orientations = [1]
+            for i in range(1, len(flows)):
+                orientations.append(1 if i % 2 == 1 else -1)
+            labels_use = list(labels[:len(flows)])
+            while len(labels_use) < len(flows):
+                labels_use.append(f'F{len(labels_use)+1}')
+
+            patches_before = set(id(p) for p in base_ax.patches)
+            texts_before = set(id(tx) for tx in base_ax.texts)
+            try:
+                sk = Sankey(ax=base_ax,
+                            scale=1.0 / input_val,
+                            offset=0.15,
+                            format='%.0f',
+                            unit=' ')
+                sk.add(flows=flows,
+                       labels=labels_use,
+                       orientations=orientations,
+                       patchlabel=lbl)
+                sk.finish()
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Sankey error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            new_patches = [p for p in base_ax.patches
+                           if id(p) not in patches_before]
+            new_texts = [tx for tx in base_ax.texts
+                         if id(tx) not in texts_before]
+            base_ax.axis('off')
+            if new_patches:
+                artist = new_patches[0]
+                data['_extra_artists'] = new_patches[1:] + new_texts
+            else:
+                artist = None
+                data['_extra_artists'] = new_texts
+
+        # ------------------- Alluvial diagram -------------------
+        elif t == "Alluvial diagram":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                M = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if M.ndim != 2:
+                return None
+            n_src, n_dst = M.shape
+            if n_src < 1 or n_dst < 1:
+                return None
+
+            src_labels = data.get('pie_labels') or \
+                [f"S{i+1}" for i in range(n_src)]
+            dst_labels = data.get('dst_labels') or \
+                [f"D{j+1}" for j in range(n_dst)]
+
+            from matplotlib.patches import Polygon
+            cmap = plt.get_cmap('tab10')
+            total = M.sum()
+            if total <= 0:
+                return None
+
+            src_sums = M.sum(axis=1)
+            dst_sums = M.sum(axis=0)
+            h_max = 1.0
+            src_h = src_sums / total * h_max
+            dst_h = dst_sums / total * h_max
+
+            gap = 0.05
+            total_src_h = sum(src_h) + gap * (n_src - 1)
+            total_dst_h = sum(dst_h) + gap * (n_dst - 1)
+            y_src_start = -total_src_h / 2
+            y_dst_start = -total_dst_h / 2
+
+            src_pos = []
+            cur = y_src_start
+            for h in src_h:
+                src_pos.append((cur, cur + h))
+                cur += h + gap
+            dst_pos = []
+            cur = y_dst_start
+            for h in dst_h:
+                dst_pos.append((cur, cur + h))
+                cur += h + gap
+
+            x_left, x_right = 0.0, 1.0
+            bar_w = 0.05
+
+            artists = []
+            for i in range(n_src):
+                y0, y1 = src_pos[i]
+                rect = plt.Rectangle(
+                    (x_left, y0), bar_w, y1 - y0,
+                    facecolor=cmap(i % 10),
+                    edgecolor='white', zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+                t_lbl = base_ax.text(
+                    x_left - 0.02, (y0 + y1) / 2,
+                    str(src_labels[i]), ha='right', va='center',
+                    fontsize=9)
+                artists.append(t_lbl)
+
+            for j in range(n_dst):
+                y0, y1 = dst_pos[j]
+                rect = plt.Rectangle(
+                    (x_right - bar_w, y0), bar_w, y1 - y0,
+                    facecolor=cmap((j + n_src) % 10),
+                    edgecolor='white', zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+                t_lbl = base_ax.text(
+                    x_right + 0.02, (y0 + y1) / 2,
+                    str(dst_labels[j]), ha='left', va='center',
+                    fontsize=9)
+                artists.append(t_lbl)
+
+            src_off = [0.0] * n_src
+            dst_off = [0.0] * n_dst
+            for i in range(n_src):
+                for j in range(n_dst):
+                    if M[i, j] <= 0:
+                        continue
+                    h = M[i, j] / total * h_max
+                    y0_src = src_pos[i][0] + src_off[i]
+                    y1_src = y0_src + h
+                    y0_dst = dst_pos[j][0] + dst_off[j]
+                    y1_dst = y0_dst + h
+
+                    N = 30
+                    t_curve = np.linspace(0, 1, N)
+                    x_curve = (x_left + bar_w +
+                                (x_right - 2 * bar_w) * t_curve)
+                    y_top = ((1 - t_curve) * y1_src +
+                             t_curve * y1_dst)
+                    y_bot = ((1 - t_curve) * y0_src +
+                             t_curve * y0_dst)
+
+                    top_pts = list(zip(x_curve, y_top))
+                    bot_pts = list(zip(x_curve[::-1], y_bot[::-1]))
+                    poly = Polygon(top_pts + bot_pts,
+                                   closed=True,
+                                   facecolor=cmap(i % 10),
+                                   edgecolor='none',
+                                   alpha=0.4, zorder=2)
+                    base_ax.add_patch(poly)
+                    artists.append(poly)
+
+                    src_off[i] += h
+                    dst_off[j] += h
+
+            base_ax.set_xlim(-0.2, 1.2)
+            base_ax.set_ylim(min(y_src_start, y_dst_start) - 0.1,
+                             max(sum(src_h) + y_src_start,
+                                 sum(dst_h) + y_dst_start) + 0.1)
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Chord -------------------
+        elif t == "Chord":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                M = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if M.ndim != 2 or M.shape[0] != M.shape[1] or M.shape[0] < 2:
+                base_ax.text(0.5, 0.5, 'Нужна квадратная матрица N×N',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            n = M.shape[0]
+            labels = data.get('pie_labels') or \
+                [f'N{i+1}' for i in range(n)]
+            row_sums = M.sum(axis=1)
+            total = row_sums.sum()
+            if total <= 0:
+                return None
+            gap = 0.05
+            avail = 2 * np.pi - n * gap
+            angles = row_sums / total * avail
+
+            starts = []
+            cur = 0.0
+            for i in range(n):
+                starts.append(cur)
+                cur += angles[i] + gap
+
+            r_inner = 0.72
+            r_outer = 0.95
+
+            from matplotlib.patches import Polygon
+            cmap = plt.get_cmap('tab10')
+            artists = []
+
+            offsets_out = [0.0] * n
+            offsets_in = [0.0] * n
+            for i in range(n):
+                for j in range(n):
+                    if i == j or M[i, j] <= 0:
+                        continue
+                    if row_sums[i] <= 0 or row_sums[j] <= 0:
+                        continue
+                    out_w = angles[i] * (M[i, j] / row_sums[i])
+                    in_w = angles[j] * (M[i, j] / row_sums[j])
+                    a1 = starts[i] + offsets_out[i]
+                    a2 = a1 + out_w
+                    b1 = starts[j] + offsets_in[j]
+                    b2 = b1 + in_w
+                    n_steps = 20
+                    t_a = np.linspace(a1, a2, n_steps)
+                    t_b = np.linspace(b1, b2, n_steps)
+                    p1 = list(zip(np.cos(t_a) * r_inner,
+                                  np.sin(t_a) * r_inner))
+                    p2 = list(zip(np.cos(t_b) * r_inner,
+                                  np.sin(t_b) * r_inner))
+                    verts = p1 + p2[::-1]
+                    ribbon = Polygon(verts, closed=True,
+                                     facecolor=cmap(i % 10),
+                                     edgecolor='none',
+                                     alpha=0.45, zorder=2)
+                    base_ax.add_patch(ribbon)
+                    artists.append(ribbon)
+                    offsets_out[i] += out_w
+                    offsets_in[j] += in_w
+
+            for i in range(n):
+                if angles[i] <= 0:
+                    continue
+                th = np.linspace(starts[i], starts[i] + angles[i], 50)
+                outer = list(zip(np.cos(th) * r_outer,
+                                 np.sin(th) * r_outer))
+                inner = list(zip(np.cos(th) * r_inner,
+                                 np.sin(th) * r_inner))
+                poly = Polygon(outer + inner[::-1], closed=True,
+                               facecolor=cmap(i % 10),
+                               edgecolor='white', alpha=0.95,
+                               zorder=3)
+                base_ax.add_patch(poly)
+                artists.append(poly)
+                mid = starts[i] + angles[i] / 2
+                x_lbl = np.cos(mid) * (r_outer + 0.06)
+                y_lbl = np.sin(mid) * (r_outer + 0.06)
+                t_lbl = base_ax.text(x_lbl, y_lbl,
+                                     str(labels[i]) if i < len(labels)
+                                     else f'N{i+1}',
+                                     ha='center', va='center',
+                                     fontsize=9, zorder=4)
+                artists.append(t_lbl)
+
+            base_ax.set_xlim(-1.2, 1.2)
+            base_ax.set_ylim(-1.2, 1.2)
+            try:
+                base_ax.set_aspect('equal')
+                base_ax.axis('off')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Сетевой график -------------------
+        elif t == "Сетевой график":
+            try:
+                import networkx as nx
+            except ImportError:
+                base_ax.text(0.5, 0.5,
+                             'Установите networkx:\n  pip install networkx',
+                             transform=base_ax.transAxes,
+                             ha='center', va='center', color='red')
+                return None
+            zs = data.get('z', []) or []
+            if not zs and x and y:
+                zs = []
+                for i in range(min(len(x), len(y))):
+                    zs.append(f"{x[i]}-{y[i]}")
+            if not zs:
+                base_ax.text(0.5, 0.5,
+                             'Нужны рёбра в поле Z (A-B; B-C; ...)',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            G = nx.Graph()
+            for e in zs:
+                if not isinstance(e, str):
+                    continue
+                if '-' not in e:
+                    continue
+                a, b = e.split('-', 1)
+                G.add_edge(a.strip(), b.strip())
+            if G.number_of_nodes() == 0:
+                return None
+
+            layout_name = data.get('layout', 'spring')
+            try:
+                if layout_name == 'circular':
+                    pos = nx.circular_layout(G)
+                elif layout_name == 'kamada':
+                    pos = nx.kamada_kawai_layout(G)
+                elif layout_name == 'spectral':
+                    pos = nx.spectral_layout(G)
+                elif layout_name == 'shell':
+                    pos = nx.shell_layout(G)
+                else:
+                    pos = nx.spring_layout(G, seed=42)
+            except Exception:
+                pos = nx.spring_layout(G, seed=42)
+
+            before_patches = set(id(p) for p in base_ax.patches)
+            before_lines = set(id(ln) for ln in base_ax.lines)
+            before_texts = set(id(tx) for tx in base_ax.texts)
+            before_colls = set(id(cl) for cl in base_ax.collections)
+
+            try:
+                nx.draw_networkx_nodes(
+                    G, pos, ax=base_ax,
+                    node_size=max(50, int(ms) ** 2 * 5),
+                    node_color=c, edgecolors='white',
+                    linewidths=0.8, alpha=0.9)
+                nx.draw_networkx_edges(
+                    G, pos, ax=base_ax,
+                    edge_color='#888', width=max(0.8, lw),
+                    alpha=0.7)
+                if data.get('show_labels', True):
+                    nx.draw_networkx_labels(
+                        G, pos, ax=base_ax, font_size=9)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Network error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+
+            new_artists = []
+            for ln in base_ax.lines:
+                if id(ln) not in before_lines:
+                    new_artists.append(ln)
+            for tx in base_ax.texts:
+                if id(tx) not in before_texts:
+                    new_artists.append(tx)
+            for cl in base_ax.collections:
+                if id(cl) not in before_colls:
+                    new_artists.append(cl)
+
+            base_ax.axis('off')
+            try:
+                base_ax.set_aspect('equal')
+            except Exception:
+                pass
+
+            artist = new_artists[0] if new_artists else None
+            data['_extra_artists'] = new_artists[1:] if len(new_artists) > 1 else []
+
+        # ------------------- Hive plot -------------------
+        elif t == "Hive plot":
+            zs = data.get('z', []) or []
+            if not zs:
+                return None
+            nodes = []
+            edges = []
+            for e in zs:
+                if not isinstance(e, str) or '-' not in e:
+                    continue
+                a, b = e.split('-', 1)
+                a, b = a.strip(), b.strip()
+                if a not in nodes:
+                    nodes.append(a)
+                if b not in nodes:
+                    nodes.append(b)
+                edges.append((a, b))
+            if not nodes:
+                return None
+
+            deg = {n: 0 for n in nodes}
+            for a, b in edges:
+                deg[a] += 1
+                deg[b] += 1
+
+            sorted_nodes = sorted(nodes, key=lambda nn: deg[nn])
+            n_axes = 3
+            axes_nodes = [[] for _ in range(n_axes)]
+            for i, nd in enumerate(sorted_nodes):
+                axes_nodes[i % n_axes].append(nd)
+
+            axis_angles = [
+                np.pi / 2,
+                np.pi / 2 + 2 * np.pi / 3,
+                np.pi / 2 + 4 * np.pi / 3,
+            ]
+            positions = {}
+            artists = []
+
+            for ai, axis_nodes in enumerate(axes_nodes):
+                ang = axis_angles[ai]
+                axis_ln, = base_ax.plot(
+                    [0, np.cos(ang)], [0, np.sin(ang)],
+                    color='gray', lw=1.0, zorder=1)
+                artists.append(axis_ln)
+
+                for i, nd in enumerate(axis_nodes):
+                    r = (i + 1) / (len(axis_nodes) + 1)
+                    xx = r * np.cos(ang)
+                    yy = r * np.sin(ang)
+                    positions[nd] = (xx, yy)
+                    sc = base_ax.scatter(
+                        [xx], [yy], s=max(30, ms ** 2 * 2),
+                        color=c, edgecolors='black',
+                        linewidths=0.6, zorder=5)
+                    artists.append(sc)
+                    t_lbl = base_ax.text(
+                        xx * 1.12, yy * 1.12, str(nd),
+                        ha='center', va='center', fontsize=8)
+                    artists.append(t_lbl)
+
+            from matplotlib.patches import PathPatch
+            from matplotlib.path import Path
+            for a, b in edges:
+                if a not in positions or b not in positions:
+                    continue
+                x1, y1 = positions[a]
+                x2, y2 = positions[b]
+                cx = (x1 + x2) * 0.15
+                cy = (y1 + y2) * 0.15
+                path = Path(
+                    [(x1, y1), (cx, cy), (x2, y2)],
+                    [Path.MOVETO, Path.CURVE3, Path.CURVE3])
+                patch = PathPatch(
+                    path, facecolor='none',
+                    edgecolor=c, lw=0.8,
+                    alpha=0.5, zorder=2)
+                base_ax.add_patch(patch)
+                artists.append(patch)
+
+            base_ax.set_xlim(-1.25, 1.25)
+            base_ax.set_ylim(-1.25, 1.25)
+            try:
+                base_ax.set_aspect('equal')
+                base_ax.axis('off')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Arc diagram -------------------
+        elif t == "Arc diagram":
+            zs = data.get('z', []) or []
+            if not zs:
+                return None
+            nodes = []
+            edges = []
+            for e in zs:
+                if not isinstance(e, str) or '-' not in e:
+                    continue
+                a, b = e.split('-', 1)
+                a, b = a.strip(), b.strip()
+                if a not in nodes:
+                    nodes.append(a)
+                if b not in nodes:
+                    nodes.append(b)
+                edges.append((a, b))
+            if not nodes:
+                return None
+            pos = {n: i for i, n in enumerate(nodes)}
+            n = len(nodes)
+
+            artists = []
+            for i, name in enumerate(nodes):
+                base_ax.scatter([i], [0], s=max(40, ms ** 2 * 3),
+                                color=c, edgecolors='black',
+                                linewidths=0.8, zorder=5)
+                t_lbl = base_ax.text(i, -0.15, name,
+                                     ha='center', va='top',
+                                     fontsize=9)
+                artists.append(t_lbl)
+
+            for (a, b) in edges:
+                x1, x2 = pos[a], pos[b]
+                if x1 == x2:
+                    continue
+                cx = (x1 + x2) / 2
+                R = abs(x2 - x1) / 2
+                theta = np.linspace(0, np.pi, 60)
+                arc_x = cx + R * np.cos(theta)
+                arc_y = R * np.sin(theta) * 0.6
+                ln, = base_ax.plot(arc_x, arc_y, color=c,
+                                    lw=max(0.7, lw * 0.6), alpha=0.7)
+                artists.append(ln)
+
+            base_ax.axis('off')
+            base_ax.set_xlim(-0.5, n - 0.5)
+            base_ax.set_ylim(-0.5, max(1.5, n * 0.4))
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Дерево (tree diagram) -------------------
+        elif t == "Дерево (tree diagram)":
+            zs = data.get('z', []) or []
+            if not zs:
+                return None
+            edges = []
+            children_map = {}
+            parents_map = {}
+            nodes = set()
+            for e in zs:
+                if not isinstance(e, str) or '-' not in e:
+                    continue
+                p, c_ = e.split('-', 1)
+                p, c_ = p.strip(), c_.strip()
+                if not p or not c_:
+                    continue
+                edges.append((p, c_))
+                nodes.add(p)
+                nodes.add(c_)
+                children_map.setdefault(p, []).append(c_)
+                parents_map[c_] = p
+
+            if not nodes:
+                return None
+            roots = [n for n in nodes if n not in parents_map]
+            if not roots:
+                roots = [list(nodes)[0]]
+
+            level = {r: 0 for r in roots}
+            for _ in range(100):
+                changed = False
+                for p, c_ in edges:
+                    if p in level and (c_ not in level
+                                        or level[c_] <= level[p]):
+                        level[c_] = level[p] + 1
+                        changed = True
+                if not changed:
+                    break
+
+            def count_leaves(nn):
+                if nn not in children_map or not children_map[nn]:
+                    return 1
+                return sum(count_leaves(ch)
+                            for ch in children_map[nn])
+
+            xs_map = {}
+
+            def assign_x(node, x_start, x_end):
+                if node not in children_map or not children_map[node]:
+                    xs_map[node] = (x_start + x_end) / 2
+                    return
+                chs = children_map[node]
+                total = sum(count_leaves(ch) for ch in chs)
+                cur = x_start
+                for ch in chs:
+                    w = (x_end - x_start) * count_leaves(ch) / total
+                    assign_x(ch, cur, cur + w)
+                    cur += w
+                xs_map[node] = (xs_map[chs[0]] + xs_map[chs[-1]]) / 2
+
+            cur_x = 0
+            for r in roots:
+                w = count_leaves(r)
+                assign_x(r, cur_x, cur_x + w)
+                cur_x += w
+
+            artists = []
+            y_scale = 1.0
+            for p, c_ in edges:
+                if p in xs_map and c_ in xs_map:
+                    x_p = xs_map[p]
+                    x_c = xs_map[c_]
+                    y_p = -level[p] * y_scale
+                    y_c = -level[c_] * y_scale
+                    ln, = base_ax.plot(
+                        [x_p, x_c], [y_p, y_c],
+                        color='#888', lw=1.2, zorder=2)
+                    artists.append(ln)
+
+            for nd in nodes:
+                if nd not in xs_map:
+                    continue
+                xx = xs_map[nd]
+                yy = -level.get(nd, 0) * y_scale
+                sc = base_ax.scatter(
+                    [xx], [yy], s=max(60, ms ** 2 * 3),
+                    color=c, edgecolors='black',
+                    linewidths=0.8, zorder=4)
+                artists.append(sc)
+                t_lbl = base_ax.text(
+                    xx, yy + 0.1, str(nd),
+                    ha='center', va='bottom', fontsize=9)
+                artists.append(t_lbl)
+
+            base_ax.set_xlim(-1, cur_x + 1)
+            max_level = max(level.values()) if level else 0
+            base_ax.set_ylim(-max_level - 0.5, 1)
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Radial tree 3D -------------------
+        elif t == "Radial tree 3D":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
+            zs = data.get('z', []) or []
+            if not zs:
+                return None
+            edges = []
+            children_map = {}
+            parents_map = {}
+            nodes = set()
+            for e in zs:
+                if not isinstance(e, str) or '-' not in e:
+                    continue
+                p, c_ = e.split('-', 1)
+                p, c_ = p.strip(), c_.strip()
+                if not p or not c_:
+                    continue
+                edges.append((p, c_))
+                nodes.add(p)
+                nodes.add(c_)
+                children_map.setdefault(p, []).append(c_)
+                parents_map[c_] = p
+            if not nodes:
+                return None
+
+            roots = [n for n in nodes if n not in parents_map]
+            if not roots:
+                roots = [list(nodes)[0]]
+
+            level = {r: 0 for r in roots}
+            for _ in range(100):
+                changed = False
+                for p, c_ in edges:
+                    if p in level and (c_ not in level
+                                        or level[c_] <= level[p]):
+                        level[c_] = level[p] + 1
+                        changed = True
+                if not changed:
+                    break
+
+            max_level = max(level.values()) if level else 1
+            if max_level == 0:
+                max_level = 1
+            radius_map = {lvl: lvl / max_level
+                           for lvl in range(max_level + 1)}
+
+            def count_leaves(nn):
+                if nn not in children_map or not children_map[nn]:
+                    return 1
+                return sum(count_leaves(ch)
+                            for ch in children_map[nn])
+
+            angles = {}
+
+            def assign_angle(node, a_start, a_end):
+                if node not in children_map or not children_map[node]:
+                    angles[node] = (a_start + a_end) / 2
+                    return
+                chs = children_map[node]
+                total = sum(count_leaves(ch) for ch in chs)
+                cur = a_start
+                for ch in chs:
+                    w = (a_end - a_start) * count_leaves(ch) / total
+                    assign_angle(ch, cur, cur + w)
+                    cur += w
+                angles[node] = (angles[chs[0]] + angles[chs[-1]]) / 2
+
+            total_leaves = sum(count_leaves(r) for r in roots)
+            cur_a = 0
+            for r in roots:
+                w = 2 * np.pi * count_leaves(r) / total_leaves
+                assign_angle(r, cur_a, cur_a + w)
+                cur_a += w
+
+            z_offset = float(x[0]) if x and len(x) >= 1 else 0.2
+            if z_offset <= 0:
+                z_offset = 0.2
+
+            pos3d = {}
+            for nd in nodes:
+                if nd not in angles:
+                    continue
+                a = angles[nd]
+                lvl = level.get(nd, 0)
+                r = radius_map.get(lvl, 0)
+                pos3d[nd] = (
+                    r * np.cos(a),
+                    r * np.sin(a),
+                    lvl * z_offset,
+                )
+
+            artists = []
+            for p, c_ in edges:
+                if p not in pos3d or c_ not in pos3d:
+                    continue
+                x1, y1, z1 = pos3d[p]
+                x2, y2, z2 = pos3d[c_]
+                ln, = base_ax.plot3D(
+                    [x1, x2], [y1, y2], [z1, z2],
+                    color='#888', lw=1.0, zorder=2)
+                artists.append(ln)
+
+            for nd, (px, py, pz) in pos3d.items():
+                sc = base_ax.scatter3D(
+                    [px], [py], [pz],
+                    s=max(30, ms ** 2 * 2),
+                    color=c, edgecolors='black',
+                    depthshade=True, zorder=4)
+                artists.append(sc)
+                if nd not in children_map or not children_map[nd]:
+                    t_lbl = base_ax.text(
+                        px * 1.1, py * 1.1, pz,
+                        str(nd), ha='center', va='center',
+                        fontsize=7)
+                    artists.append(t_lbl)
+
+            base_ax.set_xlabel("X")
+            base_ax.set_ylabel("Y")
+            base_ax.set_zlabel("Уровень")
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Circle packing -------------------
+        elif t == "Circle packing":
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            if len(y_arr) < 1:
+                return None
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                labels = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                labels = [str(v) for v in data['pie_labels']]
+            else:
+                labels = [f"C{i+1}" for i in range(len(y_arr))]
+            while len(labels) < len(y_arr):
+                labels.append(f"C{len(labels)+1}")
+            labels = labels[:len(y_arr)]
+
+            vmax = float(y_arr.max())
+            if vmax <= 0:
+                vmax = 1.0
+            radii = np.sqrt(y_arr / vmax) * 0.3
+            order = np.argsort(-radii)
+            cmap = plt.get_cmap('tab20')
+            artists = []
+
+            cols = max(1, int(np.ceil(np.sqrt(len(radii)))))
+            placed = []
+            for idx in order:
+                r = radii[idx]
+                placed_flag = False
+                for row in range(20):
+                    for col in range(cols + 5):
+                        cx = col * 0.65 + 0.5
+                        cy = row * 0.65 + 0.5
+                        ok = True
+                        for (px, py, pr) in placed:
+                            if (cx - px) ** 2 + (cy - py) ** 2 < \
+                                    (r + pr + 0.02) ** 2:
+                                ok = False
+                                break
+                        if ok:
+                            placed.append((cx, cy, r))
+                            color_i = cmap(int(idx) % 20)
+                            circ = plt.Circle(
+                                (cx, cy), r,
+                                facecolor=color_i,
+                                edgecolor='white',
+                                linewidth=1.2,
+                                alpha=0.9, zorder=3)
+                            base_ax.add_patch(circ)
+                            artists.append(circ)
+                            if r > 0.06:
+                                t_lbl = base_ax.text(
+                                    cx, cy, labels[idx],
+                                    ha='center', va='center',
+                                    fontsize=max(6, int(r * 25)),
+                                    color='white',
+                                    fontweight='bold',
+                                    zorder=4)
+                                artists.append(t_lbl)
+                            placed_flag = True
+                            break
+                    if placed_flag:
+                        break
+
+            if not placed:
+                return None
+
+            xs_pl = [p[0] for p in placed]
+            ys_pl = [p[1] for p in placed]
+            rs_pl = [p[2] for p in placed]
+            base_ax.set_xlim(min(xs_pl) - max(rs_pl) - 0.2,
+                              max(xs_pl) + max(rs_pl) + 0.2)
+            base_ax.set_ylim(min(ys_pl) - max(rs_pl) - 0.2,
+                              max(ys_pl) + max(rs_pl) + 0.2)
+            try:
+                base_ax.set_aspect('equal')
+                base_ax.axis('off')
+            except Exception:
+                pass
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Adjacency matrix -------------------
+        elif t == "Adjacency matrix":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                M = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if M.ndim != 2 or M.shape[0] != M.shape[1]:
+                base_ax.text(0.5, 0.5,
+                             'Нужна квадратная матрица N×N',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            n = M.shape[0]
+            labels = data.get('pie_labels') or \
+                [f"N{i+1}" for i in range(n)]
+            if len(labels) < n:
+                labels = list(labels) + \
+                    [f"N{i+1}" for i in range(len(labels), n)]
+            labels = labels[:n]
+
+            if data.get('reorder', True):
+                deg = M.sum(axis=1)
+                order = np.argsort(-deg)
+                M_plot = M[np.ix_(order, order)]
+                labels_plot = [labels[i] for i in order]
+            else:
+                M_plot = M
+                labels_plot = labels
+
+            artist = base_ax.imshow(
+                M_plot, cmap='viridis',
+                aspect='equal', interpolation='nearest')
+            base_ax.set_xticks(range(n))
+            base_ax.set_yticks(range(n))
+            base_ax.set_xticklabels(labels_plot,
+                                     rotation=45, ha='right',
+                                     fontsize=8)
+            base_ax.set_yticklabels(labels_plot, fontsize=8)
+            base_ax.set_title("Adjacency matrix")
+
+            try:
+                cb = base_ax.figure.colorbar(artist, ax=base_ax,
+                                              shrink=0.7, pad=0.02)
+                data['_extra_artists'] = [cb]
+            except Exception:
+                pass
+
+        # ------------------- Mapper algorithm -------------------
+        elif t == "Mapper algorithm":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                M = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if M.ndim != 2:
+                return None
+            n_pts, n_dims = M.shape
+            if n_pts < 3:
+                return None
+
+            n_clusters = max(2, min(n_pts, int(data.get('bins', 5))))
+
+            mn = M.min(axis=0)
+            mx = M.max(axis=0)
+            rng_v = np.where(mx > mn, mx - mn, 1.0)
+            Mn = (M - mn) / rng_v
+
+            rng_np = np.random.default_rng(42)
+            idx_init = rng_np.choice(n_pts, n_clusters, replace=False)
+            centers = Mn[idx_init].copy()
+            labels_arr = np.zeros(n_pts, dtype=int)
+            for _ in range(50):
+                dists = np.linalg.norm(
+                    Mn[:, None, :] - centers[None, :, :], axis=-1)
+                new_labels = np.argmin(dists, axis=1)
+                if np.array_equal(new_labels, labels_arr):
+                    break
+                labels_arr = new_labels
+                for k in range(n_clusters):
+                    mask = labels_arr == k
+                    if mask.any():
+                        centers[k] = Mn[mask].mean(axis=0)
+
+            angles = np.linspace(0, 2 * np.pi, n_clusters,
+                                  endpoint=False)
+            pos = {k: (np.cos(a), np.sin(a))
+                   for k, a in enumerate(angles)}
+
+            sizes = [int(np.sum(labels_arr == k)) for k in range(n_clusters)]
+            max_size = max(sizes) if sizes else 1
+
+            artists = []
+            edges_set = set()
+            for i in range(n_clusters):
+                for j in range(i + 1, n_clusters):
+                    d = np.linalg.norm(centers[i] - centers[j])
+                    if d < 0.5 and sizes[i] > 0 and sizes[j] > 0:
+                        edges_set.add((i, j))
+
+            for (i, j) in edges_set:
+                x1, y1 = pos[i]
+                x2, y2 = pos[j]
+                ln, = base_ax.plot([x1, x2], [y1, y2],
+                                    color='#888', lw=2.0,
+                                    alpha=0.7, zorder=1)
+                artists.append(ln)
+
+            cmap_m = plt.get_cmap('tab10')
+            for k in range(n_clusters):
+                if sizes[k] == 0:
+                    continue
+                xx, yy = pos[k]
+                sz = 200 + 800 * sizes[k] / max_size
+                sc = base_ax.scatter(
+                    [xx], [yy], s=sz,
+                    color=cmap_m(k % 10),
+                    edgecolors='white', linewidths=1.5,
+                    alpha=0.85, zorder=3,
+                    label=lbl if k == 0 else None)
+                artists.append(sc)
+                t_lbl = base_ax.text(
+                    xx, yy, f"K{k+1}\n{sizes[k]}",
+                    ha='center', va='center',
+                    color='white', fontsize=9,
+                    fontweight='bold', zorder=4)
+                artists.append(t_lbl)
+
+            base_ax.set_aspect('equal')
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+            base_ax.set_title("Mapper (упрощённый)")
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Stream plot -------------------
+        elif t == "Stream plot":
+            x_arr = np.array(x, dtype=float)
+            y_arr = np.array(y, dtype=float)
+            rawU = data.get('heatmap_data', [])
+            rawV = data.get('yerr_matrix', [])
+            if (not rawU or not rawV
+                    or not x_arr.size or not y_arr.size):
+                base_ax.text(0.5, 0.5,
+                             'Нужны Z (U) и Yerr (V) в виде матриц',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            try:
+                U = np.array(rawU, dtype=float)
+                V = np.array(rawV, dtype=float)
+            except Exception:
+                return None
+            if U.shape != V.shape:
+                base_ax.text(0.5, 0.5,
+                             'Матрицы U и V разной формы',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            m, n = U.shape
+            xg = x_arr if len(x_arr) == n else np.arange(n)
+            yg = y_arr if len(y_arr) == m else np.arange(m)
+            X, Y = np.meshgrid(xg, yg)
+            speed = np.sqrt(U ** 2 + V ** 2)
+            try:
+                strm = base_ax.streamplot(
+                    X, Y, U, V,
+                    color=speed, cmap=data.get('cmap', 'viridis'),
+                    linewidth=max(0.5, lw * 0.5),
+                    density=float(data.get('density', 1.2)),
+                    arrowsize=1.2)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Streamplot error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            extra = []
+            if hasattr(strm, 'lines'):
+                extra.append(strm.lines)
+            if hasattr(strm, 'arrows'):
+                extra.append(strm.arrows)
+            if data.get('show_colorbar', True):
+                try:
+                    cb = base_ax.figure.colorbar(strm.lines, ax=base_ax)
+                    extra.append(cb)
+                except Exception:
+                    pass
+            data['_extra_artists'] = extra
+            artist = strm.lines if hasattr(strm, 'lines') else None
+
+        # ------------------- Streamlines -------------------
+        elif t == "Streamlines":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            rawU = data.get('heatmap_data', [])
+            rawV = data.get('yerr_matrix', [])
+            if (not rawU or not rawV
+                    or not x_arr.size or not y_arr.size):
+                base_ax.text(0.5, 0.5,
+                             'Нужны Z (U) и Yerr (V) в виде матриц',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            try:
+                U = np.array(rawU, dtype=float)
+                V = np.array(rawV, dtype=float)
+            except Exception:
+                return None
+            if U.shape != V.shape:
+                base_ax.text(0.5, 0.5,
+                             'Матрицы U и V разной формы',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            m, n = U.shape
+            xg = x_arr if len(x_arr) == n else np.arange(n)
+            yg = y_arr if len(y_arr) == m else np.arange(m)
+            X, Y = np.meshgrid(xg, yg)
+            speed = np.sqrt(U ** 2 + V ** 2)
+
+            density = max(0.5, min(3.0,
+                                    int(data.get('bins', 10)) / 5.0))
+            try:
+                strm = base_ax.streamplot(
+                    X, Y, U, V,
+                    color=speed, cmap=data.get('cmap', 'viridis'),
+                    linewidth=max(0.6, lw * 0.6),
+                    density=density,
+                    arrowsize=1.5,
+                    integration_direction='both')
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Streamlines error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+
+            extra = []
+            if hasattr(strm, 'lines'):
+                extra.append(strm.lines)
+            if hasattr(strm, 'arrows'):
+                extra.append(strm.arrows)
+            if data.get('show_colorbar', True):
+                try:
+                    cb = base_ax.figure.colorbar(strm.lines, ax=base_ax)
+                    extra.append(cb)
+                except Exception:
+                    pass
+            data['_extra_artists'] = extra
+            artist = strm.lines if hasattr(strm, 'lines') else None
+
+        # ------------------- 3D Quiver -------------------
+        elif t == "3D Quiver":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
+            xs = np.array(x, dtype=float)
+            ys = np.array(y, dtype=float)
+            zs = np.array(data.get('z', []), dtype=float)
+            n = min(len(xs), len(ys), len(zs))
+            if n < 1:
+                return None
+            xs, ys, zs = xs[:n], ys[:n], zs[:n]
+            U = np.array(data.get('yerr', []), dtype=float)
+            if len(U) != n:
+                U = np.ones(n)
+            V = np.zeros(n)
+            W = np.zeros(n)
+            scale = float(data.get('quiver_scale', 1.0))
+            try:
+                artist = base_ax.quiver(
+                    xs, ys, zs, U * scale, V, W,
+                    color=c, lw=max(0.8, lw * 0.7),
+                    arrow_length_ratio=0.15,
+                    label=lbl)
+            except Exception:
+                return None
+
+        # ------------------- Bode plot -------------------
+        elif t == "Bode plot":
+            x_arr = np.array(x, dtype=float)
+            y_arr = np.array(y, dtype=float)
+            rawP = data.get('heatmap_data', [])
+            if rawP:
+                P_arr = np.array(rawP[0], dtype=float)
+            else:
+                z_col = data.get('z', [])
+                P_arr = np.array(z_col, dtype=float) if z_col else None
+
+            n = min(len(x_arr), len(y_arr))
+            if n < 2:
+                return None
+            x_arr, y_arr = x_arr[:n], y_arr[:n]
+            if P_arr is not None and len(P_arr) >= n:
+                P_arr = P_arr[:n]
+
+            mag_line, = base_ax.semilogx(
+                np.abs(x_arr), y_arr, 'o-',
+                color=c, lw=lw, markersize=max(3, ms * 0.6),
+                label=(lbl or 'Magnitude'))
+            base_ax.set_ylabel('Амплитуда (дБ)')
+            base_ax.set_xlabel('Частота (лог)')
+
+            extra = [mag_line]
+            phase_axis = None
+            subplot_idx = data.get('subplot_index', 0)
+            total_axes = len(self.axes)
+            next_idx = subplot_idx + 1
+
+            if (total_axes > 1 and next_idx < total_axes
+                    and P_arr is not None):
+                phase_axis = self.axes[next_idx]
+            else:
+                try:
+                    phase_axis = base_ax.twinx()
+                except Exception:
+                    phase_axis = None
+
+            if phase_axis is not None and P_arr is not None:
+                try:
+                    ph_line, = phase_axis.semilogx(
+                        np.abs(x_arr), P_arr, 's--',
+                        color='orange', lw=max(0.8, lw * 0.8),
+                        markersize=max(3, ms * 0.5))
+                    phase_axis.set_ylabel('Фаза (°)', color='orange')
+                    try:
+                        phase_axis.tick_params(
+                            axis='y', labelcolor='orange')
+                    except Exception:
+                        pass
+                    extra.append(ph_line)
+
+                    if (total_axes > 1 and next_idx < total_axes
+                            and phase_axis is self.axes[next_idx]):
+                        def _cleanup(_ax=phase_axis):
+                            try:
+                                _ax.clear()
+                                _ax.set_title(
+                                    self.plot_title_var.get())
+                            except Exception:
+                                pass
+                        data['_cleanup'] = _cleanup
+                    else:
+                        def _cleanup(_ax=phase_axis):
+                            try:
+                                _ax.remove()
+                            except Exception:
+                                pass
+                        data['_cleanup'] = _cleanup
+                except Exception:
+                    pass
+
+            data['_extra_artists'] = extra
+            artist = mag_line
+
+        # ------------------- Smith chart -------------------
+        elif t == "Smith chart":
+            z_matrix = data.get('heatmap_data', [])
+            if z_matrix and len(z_matrix) >= 2:
+                re_arr = np.array(z_matrix[0], dtype=float)
+                im_arr = np.array(z_matrix[1], dtype=float)
+            else:
+                re_arr = np.array(x, dtype=float)
+                im_arr = np.array(y, dtype=float)
+            n = min(len(re_arr), len(im_arr))
+            if n < 1:
+                return None
+            re_arr, im_arr = re_arr[:n], im_arr[:n]
+
+            extra = []
+            R_VALUES = [0, 0.2, 0.5, 1, 2, 5, 10]
+            X_VALUES = [0.2, 0.5, 1, 2, 5, -0.2, -0.5, -1, -2, -5]
+
+            for r in R_VALUES:
+                cx = r / (r + 1)
+                rad = 1 / (r + 1)
+                th = np.linspace(0, 2 * np.pi, 200)
+                circ_x = cx + rad * np.cos(th)
+                circ_y = rad * np.sin(th)
+                ln, = base_ax.plot(circ_x, circ_y, color='#bbb',
+                                    lw=0.5, alpha=0.7, zorder=1)
+                extra.append(ln)
+            for xv in X_VALUES:
+                cy = 1 / xv
+                rad = abs(1 / xv)
+                th = np.linspace(-np.pi, np.pi, 200)
+                circ_x = 1 + rad * np.cos(th)
+                circ_y = cy + rad * np.sin(th)
+                mask = (circ_x ** 2 + circ_y ** 2) <= 1.0001
+                if mask.any():
+                    ln, = base_ax.plot(circ_x[mask], circ_y[mask],
+                                        color='#bbb', lw=0.5,
+                                        alpha=0.7, zorder=1)
+                    extra.append(ln)
+
+            th = np.linspace(0, 2 * np.pi, 300)
+            border, = base_ax.plot(np.cos(th), np.sin(th),
+                                    color='#333', lw=1.2, zorder=2)
+            extra.append(border)
+            axis_ln, = base_ax.plot([-1, 1], [0, 0],
+                                     color='#333', lw=0.8, zorder=2)
+            extra.append(axis_ln)
+
+            z_complex = re_arr + 1j * im_arr
+            gamma = (z_complex - 1) / (z_complex + 1)
+            gx = np.real(gamma)
+            gy = np.imag(gamma)
+            main_artist = base_ax.scatter(
+                gx, gy, s=max(20, ms ** 2 * 2),
+                color=c, edgecolors='white', linewidths=0.8,
+                zorder=5, label=lbl)
+
+            if n > 2:
+                trace, = base_ax.plot(gx, gy, '-',
+                                       color=c, lw=max(0.6, lw * 0.6),
+                                       alpha=0.6, zorder=4)
+                extra.append(trace)
+
+            base_ax.set_xlim(-1.15, 1.15)
+            base_ax.set_ylim(-1.15, 1.15)
+            try:
+                base_ax.set_aspect('equal')
+            except Exception:
+                pass
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+
+            data['_extra_artists'] = extra
+            artist = main_artist
+
+        # ------------------- Nyquist plot -------------------
+        elif t == "Nyquist plot":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(x_arr), len(y_arr), len(z_arr))
+            if n < 2:
+                return None
+            x_arr, y_arr, z_arr = x_arr[:n], y_arr[:n], z_arr[:n]
+
+            artists = []
+            h_axis, = base_ax.axhline(0, color='gray', lw=0.6, zorder=1)
+            v_axis, = base_ax.axvline(0, color='gray', lw=0.6, zorder=1)
+            artists.extend([h_axis, v_axis])
+
+            line, = base_ax.plot(y_arr, z_arr, '-',
+                                  color=c, lw=lw, label=lbl, zorder=3)
+            artists.append(line)
+
+            sc = base_ax.scatter(y_arr, z_arr,
+                                  s=max(4, ms * 0.3),
+                                  color=c, alpha=0.6,
+                                  edgecolors='none', zorder=4)
+            artists.append(sc)
+
+            start = base_ax.scatter(
+                [y_arr[0]], [z_arr[0]],
+                s=max(40, ms ** 2 * 2), color='green',
+                edgecolors='black', zorder=5, label='ω_min')
+            end = base_ax.scatter(
+                [y_arr[-1]], [z_arr[-1]],
+                s=max(40, ms ** 2 * 2), color='red',
+                edgecolors='black', zorder=5, label='ω_max')
+            artists.extend([start, end])
+
+            crit = base_ax.scatter(
+                [-1], [0],
+                s=max(80, ms ** 2 * 4), color='orange',
+                marker='X', edgecolors='black',
+                zorder=6, label='(-1, 0)')
+            artists.append(crit)
+
+            base_ax.set_xlabel("Re")
+            base_ax.set_ylabel("Im")
+            base_ax.set_title("Nyquist plot")
+            base_ax.legend(fontsize=8, loc='best')
+            try:
+                base_ax.set_aspect('equal', adjustable='datalim')
+            except Exception:
+                pass
+
+            data['_extra_artists'] = artists
+            artist = line
+
+        # ------------------- Root locus -------------------
+        elif t == "Root locus":
+            num = np.array(x, dtype=float)
+            den = np.array(y, dtype=float)
+            if len(num) < 1 or len(den) < 2:
+                return None
+            n_k = max(50, min(2000, int(data.get('bins', 200))))
+            k_vals = np.concatenate([
+                np.linspace(0, 1, n_k // 2, endpoint=False),
+                np.logspace(0, 3, n_k - n_k // 2)
+            ])
+            all_roots = []
+            for K in k_vals:
+                L = max(len(den), len(num))
+                d = np.pad(den, (L - len(den), 0))
+                n_ = np.pad(num, (L - len(num), 0))
+                coeffs = d + K * n_
+                try:
+                    roots = np.roots(coeffs)
+                except Exception:
+                    continue
+                all_roots.append((K, roots))
+
+            if not all_roots:
+                return None
+
+            order = len(den) - 1
+            if order < 1:
+                order = 1
+            branches = [[] for _ in range(order)]
+            prev_roots = None
+            for K, roots in all_roots:
+                roots_sorted = np.sort_complex(roots)
+                if prev_roots is not None and \
+                        len(prev_roots) == len(roots_sorted):
+                    used = [False] * len(prev_roots)
+                    new_order = []
+                    for r in prev_roots:
+                        best_j = -1
+                        best_d = float('inf')
+                        for j, rr in enumerate(roots_sorted):
+                            if used[j]:
+                                continue
+                            d = abs(rr - r)
+                            if d < best_d:
+                                best_d = d
+                                best_j = j
+                        if best_j >= 0:
+                            new_order.append(roots_sorted[best_j])
+                            used[best_j] = True
+                    if len(new_order) == len(roots_sorted):
+                        roots_sorted = np.array(new_order)
+                prev_roots = roots_sorted
+
+                for i, r in enumerate(roots_sorted):
+                    if i < len(branches):
+                        branches[i].append(r)
+
+            cmap_rl = plt.get_cmap('tab10')
+            artists = []
+            for i, branch in enumerate(branches):
+                if len(branch) < 2:
+                    continue
+                re_arr = [r.real for r in branch]
+                im_arr = [r.imag for r in branch]
+                ln, = base_ax.plot(re_arr, im_arr, '-',
+                                    color=cmap_rl(i % 10),
+                                    lw=max(0.7, lw * 0.7),
+                                    label=f"Ветвь {i+1}"
+                                    if i == 0 else None)
+                artists.append(ln)
+                sc = base_ax.scatter(
+                    re_arr, im_arr, s=max(2, ms * 0.2),
+                    color=cmap_rl(i % 10), alpha=0.4,
+                    edgecolors='none', marker='x',
+                    zorder=3)
+                artists.append(sc)
+
+            try:
+                poles = np.roots(den)
+                zeros = np.roots(num) if len(num) > 1 else np.array([])
+            except Exception:
+                poles = np.array([])
+                zeros = np.array([])
+            if len(poles) > 0:
+                sc_p = base_ax.scatter(
+                    [p.real for p in poles],
+                    [p.imag for p in poles],
+                    s=max(60, ms ** 2 * 3), marker='x',
+                    color='red', linewidths=2,
+                    zorder=5, label='Полюса')
+                artists.append(sc_p)
+            if len(zeros) > 0:
+                sc_z = base_ax.scatter(
+                    [z.real for z in zeros],
+                    [z.imag for z in zeros],
+                    s=max(60, ms ** 2 * 3), marker='o',
+                    facecolors='none', edgecolors='blue',
+                    linewidths=2, zorder=5, label='Нули')
+                artists.append(sc_z)
+
+            base_ax.axhline(0, color='gray', lw=0.5, zorder=1)
+            base_ax.axvline(0, color='gray', lw=0.5, zorder=1)
+            base_ax.set_xlabel("Re")
+            base_ax.set_ylabel("Im")
+            base_ax.set_title("Корневой годограф")
+            base_ax.legend(fontsize=8, loc='best')
+            try:
+                base_ax.set_aspect('equal', adjustable='datalim')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Constellation diagram -------------------
+        elif t == "Constellation diagram":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 1:
+                return None
+            x_arr, y_arr = x_arr[:n], y_arr[:n]
+
+            artists = []
+            ideal = base_ax.scatter(
+                x_arr, y_arr,
+                s=max(60, ms ** 2 * 3), color=c,
+                edgecolors='black', linewidths=1.0,
+                alpha=0.85, zorder=4,
+                label=f"{lbl or 'Созвездие'} ({n} точек)")
+            artists.append(ideal)
+
+            z_arr = np.array(data.get('z', []), dtype=float)
+            if len(z_arr) >= 2 and len(z_arr) % 2 == 0:
+                n_sym = len(z_arr) // 2
+                rxs = z_arr[0::2][:n_sym]
+                rys = z_arr[1::2][:n_sym]
+                rx = base_ax.scatter(
+                    rxs, rys,
+                    s=max(8, ms * 0.5), color='orange',
+                    alpha=0.5, edgecolors='none',
+                    zorder=3, label='Принятые')
+                artists.append(rx)
+
+            base_ax.axhline(0, color='gray', lw=0.6, zorder=1)
+            base_ax.axvline(0, color='gray', lw=0.6, zorder=1)
+
+            if n >= 2:
+                try:
+                    xs_sorted = np.sort(np.unique(np.abs(x_arr)))
+                    ys_sorted = np.sort(np.unique(np.abs(y_arr)))
+                    if len(xs_sorted) >= 2 and len(ys_sorted) >= 2:
+                        d_min = min(
+                            xs_sorted[1] - xs_sorted[0],
+                            ys_sorted[1] - ys_sorted[0])
+                        for (cx, cy) in zip(x_arr, y_arr):
+                            th = np.linspace(0, 2 * np.pi, 60)
+                            circ, = base_ax.plot(
+                                cx + d_min / 2 * np.cos(th),
+                                cy + d_min / 2 * np.sin(th),
+                                color='gray', lw=0.4,
+                                alpha=0.4, zorder=2)
+                            artists.append(circ)
+                except Exception:
+                    pass
+
+            base_ax.set_xlabel("I (In-phase)")
+            base_ax.set_ylabel("Q (Quadrature)")
+            base_ax.set_title("Constellation diagram")
+            base_ax.legend(fontsize=8, loc='best')
+            try:
+                base_ax.set_aspect('equal', adjustable='datalim')
+            except Exception:
+                pass
+
+            data['_extra_artists'] = artists
+            artist = ideal
+
+        # ------------------- Choropleth -------------------
+        elif t == "Choropleth":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim == 1:
+                Z = Z.reshape(1, -1)
+            m, n = Z.shape
+
+            row_labels = data.get('pie_labels') or []
+            col_labels = data.get('col_labels') or []
+
+            vmin = float(np.nanmin(Z)) if np.isfinite(Z).any() else 0.0
+            vmax = float(np.nanmax(Z)) if np.isfinite(Z).any() else 1.0
+            rng = vmax - vmin if vmax > vmin else 1.0
+            cmap = plt.get_cmap('YlOrRd')
+
+            artists = []
+            for i in range(m):
+                for j in range(n):
+                    val = Z[i, j]
+                    norm = (val - vmin) / rng if np.isfinite(val) else 0.0
+                    face = cmap(norm)
+                    rect = plt.Rectangle(
+                        (j, m - 1 - i), 1, 1,
+                        facecolor=face, edgecolor='white',
+                        linewidth=1.2, zorder=2)
+                    base_ax.add_patch(rect)
+                    artists.append(rect)
+                    val_txt = base_ax.text(
+                        j + 0.5, m - 1 - i + 0.5,
+                        f"{val:.3g}", ha='center', va='center',
+                        fontsize=8, zorder=3,
+                        color='black' if norm < 0.6 else 'white')
+                    artists.append(val_txt)
+
+            for i in range(m):
+                lbl = row_labels[i] if i < len(row_labels) \
+                    else f"R{i+1}"
+                t_lbl = base_ax.text(
+                    -0.1, m - 0.5 - i, str(lbl),
+                    ha='right', va='center', fontsize=9)
+                artists.append(t_lbl)
+
+            for j in range(n):
+                lbl = col_labels[j] if j < len(col_labels) \
+                    else f"C{j+1}"
+                t_lbl = base_ax.text(
+                    j + 0.5, -0.1, str(lbl),
+                    ha='center', va='top', fontsize=9)
+                artists.append(t_lbl)
+
+            base_ax.set_xlim(-1, n)
+            base_ax.set_ylim(-0.5, m)
+            base_ax.set_aspect('equal')
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            base_ax.set_title("Choropleth (схема)")
+
+            try:
+                sm = mpl.cm.ScalarMappable(
+                    cmap=cmap,
+                    norm=mpl.colors.Normalize(vmin=vmin, vmax=vmax))
+                sm.set_array([])
+                cb = base_ax.figure.colorbar(sm, ax=base_ax,
+                                              shrink=0.7, pad=0.02)
+                artists.append(cb)
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Flow map -------------------
+        elif t == "Flow map":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n_nodes = min(len(x_arr), len(y_arr))
+            if n_nodes < 2:
+                return None
+            x_arr = x_arr[:n_nodes]
+            y_arr = y_arr[:n_nodes]
+
+            labels = data.get('pie_labels') or \
+                [f"N{i+1}" for i in range(n_nodes)]
+            if len(labels) < n_nodes:
+                labels = list(labels) + \
+                    [f"N{i+1}" for i in range(len(labels), n_nodes)]
+            labels = labels[:n_nodes]
+            node_idx = {str(lbl): i for i, lbl in enumerate(labels)}
+
+            z_raw = data.get('z', []) or []
+            edges = []
+            for e in z_raw:
+                if not isinstance(e, str) or '-' not in e:
+                    continue
+                a, b = e.split('-', 1)
+                a, b = a.strip(), b.strip()
+                if a in node_idx and b in node_idx:
+                    edges.append((node_idx[a], node_idx[b]))
+
+            artists = []
+            from collections import Counter
+            deg = Counter()
+            for a, b in edges:
+                deg[a] += 1
+                deg[b] += 1
+            deg_max = max(deg.values()) if deg else 1
+
+            for a, b in edges:
+                x1, y1 = x_arr[a], y_arr[a]
+                x2, y2 = x_arr[b], y_arr[b]
+                arr = base_ax.annotate(
+                    "",
+                    xy=(x2, y2),
+                    xytext=(x1, y1),
+                    arrowprops=dict(
+                        arrowstyle='->',
+                        color=c,
+                        lw=max(0.8, lw * 0.6),
+                        alpha=0.7,
+                        shrinkA=10,
+                        shrinkB=10,
+                        connectionstyle='arc3,rad=0.15'),
+                    zorder=2)
+                artists.append(arr)
+
+            for i in range(n_nodes):
+                size = max(60, ms ** 2 * 3 +
+                            (deg.get(i, 0) / deg_max) * ms ** 2 * 6)
+                sc = base_ax.scatter(
+                    [x_arr[i]], [y_arr[i]],
+                    s=size, color=c,
+                    edgecolors='black', linewidths=1.0,
+                    alpha=0.9, zorder=4)
+                artists.append(sc)
+                t_lbl = base_ax.text(
+                    x_arr[i], y_arr[i], str(labels[i]),
+                    ha='center', va='center',
+                    color='white', fontsize=9,
+                    fontweight='bold', zorder=5)
+                artists.append(t_lbl)
+
+            base_ax.set_aspect('equal')
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+            base_ax.set_title("Flow map")
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Isopleth -------------------
+        elif t == "Isopleth":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            row_lens = [len(r) for r in raw if r]
+            if not row_lens or len(set(row_lens)) != 1:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim == 1:
+                Z = Z.reshape(1, -1)
+            if Z.shape[0] < 2 or Z.shape[1] < 2:
+                return None
+            n_levels = max(3, min(50, int(data.get('bins', 10))))
+
+            cf = base_ax.contourf(Z, levels=n_levels,
+                                   cmap='viridis', alpha=0.85)
+            cl = base_ax.contour(Z, levels=n_levels,
+                                  colors='black', linewidths=0.5,
+                                  alpha=0.6)
+            try:
+                base_ax.clabel(cl, inline=True, fontsize=7,
+                                fmt='%.3g')
+            except Exception:
+                pass
+
+            extra = [cl]
+            try:
+                cb = base_ax.figure.colorbar(cf, ax=base_ax,
+                                              shrink=0.7, pad=0.02)
+                extra.append(cb)
+            except Exception:
+                pass
+            base_ax.set_title("Isopleth")
+
+            data['_extra_artists'] = extra
+            artist = cf
+
+        # ------------------- Cartogram -------------------
+        elif t == "Cartogram":
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            if len(y_arr) < 1:
+                return None
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                labels = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                labels = [str(v) for v in data['pie_labels']]
+            else:
+                labels = [f"R{i+1}" for i in range(len(y_arr))]
+            while len(labels) < len(y_arr):
+                labels.append(f"R{len(labels)+1}")
+            labels = labels[:len(y_arr)]
+
+            vmax = float(y_arr.max())
+            if vmax <= 0:
+                vmax = 1.0
+            sides = np.sqrt(y_arr / vmax)
+
+            cmap = plt.get_cmap('tab20')
+            order = np.argsort(-y_arr)
+
+            artists = []
+            placed = []
+            x_cur = 0.0
+            y_cur = 0.0
+            row_h = 0.0
+            max_x = 10.0
+
+            for idx in order:
+                s = float(sides[idx])
+                if x_cur + s > max_x and x_cur > 0:
+                    x_cur = 0.0
+                    y_cur += row_h + 0.05
+                    row_h = 0.0
+                x0, y0 = x_cur, y_cur
+                rect = plt.Rectangle(
+                    (x0, y0), s, s,
+                    facecolor=cmap(int(idx) % 20),
+                    edgecolor='white', linewidth=1.5,
+                    alpha=0.9, zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+                if s > 0.25:
+                    t_lbl = base_ax.text(
+                        x0 + s / 2, y0 + s / 2,
+                        f"{labels[idx]}\n{y_arr[idx]:.3g}",
+                        ha='center', va='center',
+                        fontsize=max(7, int(s * 10)),
+                        color='white', fontweight='bold',
+                        zorder=4)
+                    artists.append(t_lbl)
+                placed.append((x0, y0, s))
+                x_cur += s + 0.05
+                row_h = max(row_h, s)
+
+            if not placed:
+                return None
+            max_y = max(p[1] + p[2] for p in placed)
+            max_x_used = max(p[0] + p[2] for p in placed)
+            base_ax.set_xlim(-0.2, max_x_used + 0.2)
+            base_ax.set_ylim(-0.2, max_y + 0.2)
+            base_ax.set_aspect('equal')
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+            base_ax.set_title("Cartogram")
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Dot density map -------------------
+        elif t == "Dot density map":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim == 1:
+                Z = Z.reshape(1, -1)
+            m, n = Z.shape
+            zmax = float(np.nanmax(Z)) if np.isfinite(Z).any() else 1.0
+            if zmax <= 0:
+                zmax = 1.0
+
+            rng_d = np.random.default_rng(42)
+            xs_list = []
+            ys_list = []
+            max_dots_per_cell = 100
+
+            for i in range(m):
+                for j in range(n):
+                    val = float(Z[i, j])
+                    if not np.isfinite(val) or val <= 0:
+                        continue
+                    count = int(val / zmax * max_dots_per_cell)
+                    if count == 0:
+                        continue
+                    local_x = rng_d.uniform(0, 1, count) + j
+                    local_y = rng_d.uniform(0, 1, count) + (m - 1 - i)
+                    xs_list.append(local_x)
+                    ys_list.append(local_y)
+
+            for i in range(m):
+                for j in range(n):
+                    rect = plt.Rectangle(
+                        (j, m - 1 - i), 1, 1,
+                        facecolor='none', edgecolor='#ddd',
+                        linewidth=0.5, zorder=1)
+                    base_ax.add_patch(rect)
+
+            if xs_list:
+                xs_all = np.concatenate(xs_list)
+                ys_all = np.concatenate(ys_list)
+                sc = base_ax.scatter(
+                    xs_all, ys_all, s=max(1.5, ms * 0.15),
+                    color=c, alpha=0.7,
+                    edgecolors='none', zorder=3)
+                artist = sc
+            else:
+                artist = None
+
+            base_ax.set_xlim(0, n)
+            base_ax.set_ylim(0, m)
+            base_ax.set_aspect('equal')
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            base_ax.set_title("Dot density map")
+            data['_extra_artists'] = []
+
+        # ------------------- Hodograph -------------------
+        elif t == "Hodograph":
+            u_arr = np.array(x, dtype=float) if x else np.array([])
+            v_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(u_arr), len(v_arr))
+            if n < 2:
+                return None
+            u_arr = u_arr[:n]
+            v_arr = v_arr[:n]
+
+            artists = []
+            line, = base_ax.plot(u_arr, v_arr, '-',
+                                  color=c, lw=lw, label=lbl,
+                                  zorder=3, marker='o',
+                                  markersize=max(3, ms * 0.5))
+            artists.append(line)
+
+            for i in range(n - 1):
+                arr = base_ax.annotate(
+                    "",
+                    xy=(u_arr[i + 1], v_arr[i + 1]),
+                    xytext=(u_arr[i], v_arr[i]),
+                    arrowprops=dict(
+                        arrowstyle='-|>',
+                        color=c, lw=0.8, alpha=0.5),
+                    zorder=2)
+                artists.append(arr)
+
+            base_ax.axhline(0, color='gray', lw=0.6, zorder=1)
+            base_ax.axvline(0, color='gray', lw=0.6, zorder=1)
+            center = base_ax.scatter(
+                [0], [0], s=max(30, ms ** 2 * 2),
+                color='black', zorder=5, label='Штиль')
+            artists.append(center)
+
+            max_r = max(np.abs(u_arr).max(), np.abs(v_arr).max())
+            if max_r > 0:
+                step = max(1.0, round(max_r / 4))
+                for r in np.arange(step, max_r * 1.2, step):
+                    th = np.linspace(0, 2 * np.pi, 100)
+                    ln, = base_ax.plot(
+                        r * np.cos(th), r * np.sin(th),
+                        color='#ddd', lw=0.4, zorder=0)
+                    artists.append(ln)
+                    t_lbl = base_ax.text(
+                        r, 0.05 * max_r, f"{r:g}",
+                        ha='center', va='bottom',
+                        fontsize=7, color='gray')
+                    artists.append(t_lbl)
+
+            base_ax.set_xlabel("U (м/с)")
+            base_ax.set_ylabel("V (м/с)")
+            base_ax.set_title("Ходограф скорости")
+            try:
+                base_ax.set_aspect('equal', adjustable='datalim')
+            except Exception:
+                pass
+            base_ax.legend(fontsize=8, loc='best')
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Роза ветров -------------------
+        elif t == "Роза ветров":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 1:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+
+            n_bins = max(4, min(72, int(data.get('bins', 16))))
+            sector_width = 360.0 / n_bins
+            sectors = np.zeros(n_bins)
+            for xi, yi in zip(x_arr, y_arr):
+                ang = xi % 360
+                idx = int(ang // sector_width) % n_bins
+                sectors[idx] += yi
+
+            theta = np.deg2rad(
+                (np.arange(n_bins) + 0.5) * sector_width)
+            bar_width = np.deg2rad(sector_width) * 0.9
+
+            artists = []
+            if getattr(base_ax, 'name', '') == 'polar':
+                bars = base_ax.bar(
+                    theta, sectors, width=bar_width,
+                    color=c, alpha=0.85,
+                    edgecolor='white', linewidth=1.0,
+                    label=lbl, zorder=3)
+                artists.append(bars)
+                try:
+                    base_ax.set_theta_zero_location('N')
+                    base_ax.set_theta_direction(-1)
+                except Exception:
+                    pass
+                try:
+                    dir_labels = ['С', 'СВ', 'В', 'ЮВ',
+                                   'Ю', 'ЮЗ', 'З', 'СЗ']
+                    dir_angles = np.deg2rad([0, 45, 90, 135,
+                                              180, 225, 270, 315])
+                    base_ax.set_thetagrids(np.rad2deg(dir_angles),
+                                            dir_labels)
+                except Exception:
+                    pass
+                base_ax.set_title("Роза ветров")
+                artist = bars
+            else:
+                from matplotlib.patches import Polygon
+                for i in range(n_bins):
+                    a = theta[i]
+                    r = sectors[i]
+                    if r <= 0:
+                        continue
+                    th_range = np.linspace(
+                        a - bar_width / 2, a + bar_width / 2, 20)
+                    pts = [(0, 0)] + \
+                        [(r * np.sin(t), r * np.cos(t))
+                         for t in th_range]
+                    poly = Polygon(pts, closed=True,
+                                   facecolor=c, alpha=0.85,
+                                   edgecolor='white',
+                                   linewidth=1.0, zorder=3)
+                    base_ax.add_patch(poly)
+                    artists.append(poly)
+                base_ax.set_aspect('equal')
+                base_ax.set_title("Роза ветров")
+                artist = artists[0] if artists else None
+                data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Skew-T log-P -------------------
+        elif t == "Skew-T log-P":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(x_arr), len(y_arr), len(z_arr))
+            if n < 2:
+                return None
+            pres = x_arr[:n]
+            temp = y_arr[:n]
+            dewp = z_arr[:n]
+
+            mask = (pres > 0)
+            pres = pres[mask]
+            temp = temp[mask]
+            dewp = dewp[mask]
+            if len(pres) < 2:
+                return None
+
+            order = np.argsort(-pres)
+            pres = pres[order]
+            temp = temp[order]
+            dewp = dewp[order]
+
+            p_min = max(100.0, pres.min())
+            p_max = min(1050.0, pres.max())
+            t_min = min(temp.min(), dewp.min()) - 10
+            t_max = max(temp.max(), dewp.max()) + 10
+
+            artists = []
+            skew = 40.0
+            p_arr = np.logspace(np.log10(p_min), np.log10(p_max), 60)
+            for T0 in range(-100, 51, 10):
+                T_iso = T0 + skew * np.log10(1000.0 / p_arr)
+                ln, = base_ax.plot(T_iso, p_arr, '-',
+                                    color='#ccc', lw=0.5,
+                                    zorder=1)
+                artists.append(ln)
+
+            for theta in range(-40, 121, 20):
+                T_dry = (theta + 273.15) * \
+                    (p_arr / 1000.0) ** 0.286 - 273.15
+                ln, = base_ax.plot(T_dry + skew *
+                                    np.log10(1000.0 / p_arr),
+                                    p_arr, '-',
+                                    color='#f5c26b', lw=0.5,
+                                    alpha=0.6, zorder=1)
+                artists.append(ln)
+
+            T_skewed = temp + skew * np.log10(1000.0 / pres)
+            t_line, = base_ax.plot(T_skewed, pres, 'o-',
+                                    color='red', lw=2.0,
+                                    markersize=4, label='T')
+            artists.append(t_line)
+
+            Td_skewed = dewp + skew * np.log10(1000.0 / pres)
+            td_line, = base_ax.plot(Td_skewed, pres, 's--',
+                                     color='blue', lw=1.8,
+                                     markersize=3, label='Td')
+            artists.append(td_line)
+
+            base_ax.set_yscale('log')
+            base_ax.set_ylim(p_max, p_min)
+            base_ax.set_xlim(t_min, t_max + 30)
+            base_ax.set_xlabel("Температура (°C)")
+            base_ax.set_ylabel("Давление (гПа)")
+            base_ax.set_title("Skew-T log-P")
+            base_ax.legend(fontsize=9, loc='upper right')
+            base_ax.grid(True, which='major',
+                          color='#eee', lw=0.5)
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Thermodynamic diagram -------------------
+        elif t == "Thermodynamic diagram":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(x_arr), len(y_arr), len(z_arr))
+            if n < 2:
+                return None
+            pres = x_arr[:n]
+            temp = y_arr[:n]
+            dewp = z_arr[:n]
+
+            mask = (pres > 0)
+            pres = pres[mask]
+            temp = temp[mask]
+            dewp = dewp[mask]
+            if len(pres) < 2:
+                return None
+
+            order = np.argsort(-pres)
+            pres = pres[order]
+            temp = temp[order]
+            dewp = dewp[order]
+
+            p_min = max(100.0, pres.min())
+            p_max = min(1050.0, pres.max())
+
+            artists = []
+            for p0 in [1000, 925, 850, 700, 500, 400, 300, 250,
+                        200, 150, 100]:
+                if p_min <= p0 <= p_max:
+                    ln, = base_ax.axhline(
+                        p0, color='#ccc', lw=0.5, zorder=1)
+                    artists.append(ln)
+            for T0 in range(-100, 51, 10):
+                ln, = base_ax.axvline(
+                    T0, color='#eee', lw=0.4, zorder=0)
+                artists.append(ln)
+
+            t_line, = base_ax.plot(temp, pres, 'o-',
+                                    color='red', lw=2.0,
+                                    markersize=5, label='T')
+            artists.append(t_line)
+            td_line, = base_ax.plot(dewp, pres, 's--',
+                                     color='blue', lw=1.8,
+                                     markersize=4, label='Td')
+            artists.append(td_line)
+
+            try:
+                base_ax.fill_betweenx(
+                    pres, dewp, temp,
+                    color='purple', alpha=0.15,
+                    label='Область')
+            except Exception:
+                pass
+
+            base_ax.set_yscale('log')
+            base_ax.set_ylim(p_max, p_min)
+            base_ax.set_xlabel("Температура (°C)")
+            base_ax.set_ylabel("Давление (гПа)")
+            base_ax.set_title("Emagram")
+            base_ax.legend(fontsize=9, loc='best')
+            base_ax.grid(True, which='major',
+                          color='#eee', lw=0.5, alpha=0.5)
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Диаграмма Вороного -------------------
+        elif t == "Диаграмма Вороного":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 2:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+            points = np.column_stack([x_arr, y_arr])
+
+            try:
+                from scipy.spatial import Voronoi
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            try:
+                vor = Voronoi(points)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Voronoi error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+
+            from matplotlib.collections import LineCollection
+            artists = []
+            segments = []
+            for (p1, p2) in vor.ridge_vertices:
+                if p1 >= 0 and p2 >= 0:
+                    segments.append([vor.vertices[p1],
+                                      vor.vertices[p2]])
+            if segments:
+                lc = LineCollection(segments, colors='black',
+                                     linewidths=max(0.6, lw * 0.5),
+                                     alpha=0.7, zorder=1)
+                base_ax.add_collection(lc)
+                artists.append(lc)
+
+            sc = base_ax.scatter(
+                x_arr, y_arr, s=max(30, ms ** 2 * 2),
+                color=c, edgecolors='white',
+                linewidths=1.0, zorder=3, label=lbl)
+            artists.append(sc)
+
+            xmin = min(v[0] for v in vor.vertices) - 1
+            xmax = max(v[0] for v in vor.vertices) + 1
+            ymin = min(v[1] for v in vor.vertices) - 1
+            ymax = max(v[1] for v in vor.vertices) + 1
+            base_ax.set_xlim(xmin, xmax)
+            base_ax.set_ylim(ymin, ymax)
+            base_ax.set_title("Диаграмма Вороного")
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Выпуклая оболочка -------------------
+        elif t == "Выпуклая оболочка":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 3:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+            points = np.column_stack([x_arr, y_arr])
+
+            try:
+                from scipy.spatial import ConvexHull
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            try:
+                hull = ConvexHull(points)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'ConvexHull error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+
+            hull_pts = points[hull.vertices]
+            hull_pts = np.vstack([hull_pts, hull_pts[0]])
+
+            artists = []
+            sc = base_ax.scatter(
+                x_arr, y_arr, s=max(20, ms ** 2),
+                color=c, alpha=0.6,
+                edgecolors='none', zorder=2,
+                label=f"{lbl} (n={n})")
+            artists.append(sc)
+
+            line, = base_ax.plot(hull_pts[:, 0], hull_pts[:, 1],
+                                  '-', color='red',
+                                  lw=max(1.0, lw * 0.8),
+                                  zorder=3,
+                                  label=f"Оболочка "
+                                        f"({len(hull.vertices)} вершин)")
+            artists.append(line)
+
+            fill = base_ax.fill(hull_pts[:, 0], hull_pts[:, 1],
+                                 color='red', alpha=0.1, zorder=1)
+            artists.append(fill)
+
+            sc_hull = base_ax.scatter(
+                hull_pts[:-1, 0], hull_pts[:-1, 1],
+                s=max(50, ms ** 2 * 2.5), color='red',
+                edgecolors='black', linewidths=0.8,
+                zorder=4)
+            artists.append(sc_hull)
+
+            base_ax.set_title("Выпуклая оболочка")
+            try:
+                base_ax.legend(fontsize=8, loc='best')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Alpha shape -------------------
+        elif t == "Alpha shape":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 3:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+            points = np.column_stack([x_arr, y_arr])
+
+            bins = max(1, int(data.get('bins', 5)))
+            alpha = 1.0 / (bins / 2.0)
+            alpha = max(0.05, min(10.0, alpha))
+
+            try:
+                from scipy.spatial import Delaunay
+            except ImportError:
+                base_ax.text(0.5, 0.5, 'scipy required',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            try:
+                tri = Delaunay(points)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f'Delaunay error: {e}',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+
+            def circumradius(a, b, c_):
+                ax_, ay = a
+                bx, by = b
+                cx, cy = c_
+                d = 2 * (ax_ * (by - cy) + bx * (cy - ay) +
+                         cx * (ay - by))
+                if abs(d) < 1e-12:
+                    return float('inf')
+                ux = ((ax_ ** 2 + ay ** 2) * (by - cy) +
+                       (bx ** 2 + by ** 2) * (cy - ay) +
+                       (cx ** 2 + cy ** 2) * (ay - by)) / d
+                uy = ((ax_ ** 2 + ay ** 2) * (cx - bx) +
+                       (bx ** 2 + by ** 2) * (ax_ - cx) +
+                       (cx ** 2 + cy ** 2) * (bx - ax_)) / d
+                r = np.hypot(ux - ax_, uy - ay)
+                return r
+
+            artists = []
+            kept_edges = []
+            for simplex in tri.simplices:
+                a = points[simplex[0]]
+                b = points[simplex[1]]
+                c_ = points[simplex[2]]
+                r = circumradius(a, b, c_)
+                if r <= 1.0 / alpha:
+                    kept_edges.append([a, b])
+                    kept_edges.append([b, c_])
+                    kept_edges.append([c_, a])
+
+            sc = base_ax.scatter(
+                x_arr, y_arr, s=max(15, ms ** 2 * 0.8),
+                color=c, alpha=0.85,
+                edgecolors='white', linewidths=0.5,
+                zorder=3, label=f"{lbl} (α={alpha:.2f})")
+            artists.append(sc)
+
+            if kept_edges:
+                from matplotlib.collections import LineCollection
+                lc = LineCollection(kept_edges,
+                                     colors='darkred',
+                                     linewidths=max(0.6, lw * 0.5),
+                                     alpha=0.8, zorder=2)
+                base_ax.add_collection(lc)
+                artists.append(lc)
+
+            base_ax.set_title(f"Alpha shape (α = {alpha:.3f})")
+            try:
+                base_ax.legend(fontsize=8, loc='best')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Volcano plot -------------------
+        elif t == "Volcano plot":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 1:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+
+            fc_thr = 1.0
+            p_thr = 1.3
+
+            sig_up = (x_arr > fc_thr) & (y_arr > p_thr)
+            sig_down = (x_arr < -fc_thr) & (y_arr > p_thr)
+            nsig = ~(sig_up | sig_down)
+
+            artists = []
+            if nsig.any():
+                s1 = base_ax.scatter(
+                    x_arr[nsig], y_arr[nsig],
+                    s=max(15, ms ** 2 * 0.7),
+                    color='gray', alpha=0.5,
+                    edgecolors='none', zorder=2,
+                    label=f"Незначимые ({nsig.sum()})")
+                artists.append(s1)
+            if sig_up.any():
+                s2 = base_ax.scatter(
+                    x_arr[sig_up], y_arr[sig_up],
+                    s=max(20, ms ** 2),
+                    color='red', alpha=0.7,
+                    edgecolors='black', linewidths=0.4,
+                    zorder=3,
+                    label=f"↑ ({sig_up.sum()})")
+                artists.append(s2)
+            if sig_down.any():
+                s3 = base_ax.scatter(
+                    x_arr[sig_down], y_arr[sig_down],
+                    s=max(20, ms ** 2),
+                    color='blue', alpha=0.7,
+                    edgecolors='black', linewidths=0.4,
+                    zorder=3,
+                    label=f"↓ ({sig_down.sum()})")
+                artists.append(s3)
+
+            l1 = base_ax.axvline(fc_thr, color='#333', lw=0.8,
+                                  ls='--', alpha=0.6, zorder=1)
+            l2 = base_ax.axvline(-fc_thr, color='#333', lw=0.8,
+                                   ls='--', alpha=0.6, zorder=1)
+            l3 = base_ax.axhline(p_thr, color='#333', lw=0.8,
+                                  ls='--', alpha=0.6, zorder=1)
+            artists.extend([l1, l2, l3])
+
+            base_ax.set_xlabel("log2(Fold Change)")
+            base_ax.set_ylabel("-log10(p-value)")
+            base_ax.set_title("Volcano plot")
+            try:
+                base_ax.legend(fontsize=8, loc='best')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- ROC curve -------------------
+        elif t == "ROC curve":
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(y_arr), len(z_arr))
+            if n < 4:
+                return None
+            y_true = y_arr[:n]
+            y_score = z_arr[:n]
+
+            classes = np.unique(y_true)
+            if len(classes) != 2:
+                base_ax.text(0.5, 0.5,
+                             'ROC требует ровно 2 класса',
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+            pos_label = classes[-1]
+
+            order = np.argsort(-y_score)
+            y_true_sorted = y_true[order]
+
+            P = int((y_true == pos_label).sum())
+            N = int(n - P)
+            if P == 0 or N == 0:
+                return None
+
+            tp = np.cumsum(y_true_sorted == pos_label)
+            fp = np.cumsum(y_true_sorted != pos_label)
+            tpr = tp / P
+            fpr = fp / N
+
+            fpr = np.concatenate([[0.0], fpr])
+            tpr = np.concatenate([[0.0], tpr])
+
+            auc = float(np.trapz(tpr, fpr))
+
+            artists = []
+            diag, = base_ax.plot([0, 1], [0, 1], '--',
+                                  color='gray', lw=1.0,
+                                  alpha=0.7, zorder=1,
+                                  label='Случайный')
+            artists.append(diag)
+            roc_line, = base_ax.plot(
+                fpr, tpr, '-', color=c,
+                lw=max(1.5, lw), zorder=3,
+                label=f"ROC (AUC = {auc:.4f})")
+            artists.append(roc_line)
+            fill = base_ax.fill_between(
+                fpr, 0, tpr,
+                color=c, alpha=0.15, zorder=1)
+            artists.append(fill)
+
+            base_ax.set_xlim(0, 1)
+            base_ax.set_ylim(0, 1.05)
+            base_ax.set_xlabel("False Positive Rate")
+            base_ax.set_ylabel("True Positive Rate")
+            base_ax.set_title(f"ROC-кривая (AUC = {auc:.4f})")
+            try:
+                base_ax.legend(fontsize=9, loc='lower right')
+            except Exception:
+                pass
+            base_ax.set_aspect('equal', adjustable='box')
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Manhattan plot -------------------
+        elif t == "Manhattan plot":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 2:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+
+            z_raw = data.get('z', [])
+            if z_raw and len(z_raw) >= n:
+                chrom = np.array(z_raw[:n], dtype=float)
+            else:
+                chrom = np.ones(n)
+
+            chromosomes = np.unique(chrom)
+            colors_pair = ['#1f77b4', '#ff7f0e', '#2ca02c',
+                            '#d62728', '#9467bd', '#8c564b',
+                            '#e377c2', '#7f7f7f', '#bcbd22',
+                            '#17becf']
+
+            artists = []
+            offset = 0.0
+            x_ticks = []
+            x_labels = []
+            all_x = []
+            all_y = []
+            all_c = []
+
+            for i, c_ in enumerate(chromosomes):
+                mask = chrom == c_
+                xs = x_arr[mask]
+                ys = y_arr[mask]
+                span = float(xs.max() - xs.min()) if len(xs) > 1 else 1.0
+                gap = span * 0.1 if span > 0 else 0.1
+                xs_shifted = xs - xs.min() + offset
+                all_x.append(xs_shifted)
+                all_y.append(ys)
+                color_i = colors_pair[i % len(colors_pair)]
+                all_c.append(np.array([color_i] * len(xs_shifted)))
+                x_ticks.append(offset + span / 2)
+                x_labels.append(f"Chr {int(c_)}")
+                offset += span + gap
+
+            if not all_x:
+                return None
+            xs_all = np.concatenate(all_x)
+            ys_all = np.concatenate(all_y)
+            cs_all = np.concatenate(all_c)
+
+            sc = base_ax.scatter(
+                xs_all, ys_all, s=max(4, ms ** 2 * 0.4),
+                c=cs_all, alpha=0.8,
+                edgecolors='none', zorder=3)
+            artists.append(sc)
+
+            if ys_all.size > 0:
+                threshold = max(5.0, float(np.percentile(ys_all, 95)))
+                sig_line = base_ax.axhline(
+                    threshold, color='red', lw=1.0,
+                    ls='--', alpha=0.7, zorder=2,
+                    label=f"Порог ({threshold:.2f})")
+                artists.append(sig_line)
+
+            base_ax.set_xticks(x_ticks)
+            try:
+                base_ax.set_xticklabels(x_labels,
+                                         rotation=45, ha='right',
+                                         fontsize=8)
+            except Exception:
+                pass
+            base_ax.set_ylabel("-log10(p-value)")
+            base_ax.set_title("Manhattan plot")
+            try:
+                base_ax.legend(fontsize=8, loc='best')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- MA plot -------------------
+        elif t == "MA plot":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            n = min(len(x_arr), len(y_arr))
+            if n < 2:
+                return None
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+
+            sc = base_ax.scatter(
+                x_arr, y_arr, s=max(8, ms ** 2 * 0.5),
+                color=c, alpha=0.6,
+                edgecolors='none', zorder=3, label=lbl)
+            artists = [sc]
+
+            zero, = base_ax.plot([x_arr.min(), x_arr.max()],
+                                  [0, 0], '--',
+                                  color='red', lw=1.2,
+                                  alpha=0.7, zorder=2,
+                                  label='M = 0')
+            artists.append(zero)
+
+            if data.get('fill', False):
+                base_ax.fill_between(
+                    [x_arr.min(), x_arr.max()],
+                    [-1, -1], [1, 1],
+                    color='#ccc', alpha=0.15,
+                    zorder=1)
+
+            base_ax.set_xlabel("A = log2(mean)")
+            base_ax.set_ylabel("M = log2(ratio)")
+            base_ax.set_title("MA plot")
+            try:
+                base_ax.legend(fontsize=8, loc='best')
+            except Exception:
+                pass
+
+            data['_extra_artists'] = artists[1:]
+            artist = artists[0]
+
+        # ------------------- Recurrence plot -------------------
+        elif t == "Recurrence plot":
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 4:
+                return None
+            eps_factor = 0.1
+            m = max(1, min(3, int(data.get('bins', 1))))
+            if m > 1:
+                n_v = len(y_arr) - m + 1
+                if n_v < 4:
+                    m = 1
+            if m == 1:
+                eps = float(np.std(y_arr)) * eps_factor
+                if eps <= 0:
+                    eps = 1e-9
+                D = np.abs(y_arr[:, None] - y_arr[None, :])
+                R = (D < eps).astype(float)
+            else:
+                n = len(y_arr)
+                V = np.array([y_arr[i:i + m]
+                               for i in range(n - m + 1)])
+                eps = np.std(y_arr) * eps_factor * np.sqrt(m)
+                if eps <= 0:
+                    eps = 1e-9
+                D = np.sqrt(
+                    ((V[:, None, :] - V[None, :, :]) ** 2).sum(axis=-1))
+                R = (D < eps).astype(float)
+
+            artist = base_ax.imshow(
+                R, cmap='binary', aspect='auto',
+                interpolation='nearest', origin='lower')
+            base_ax.set_xlabel("i")
+            base_ax.set_ylabel("j")
+            base_ax.set_title(f"Recurrence m={m}")
+
+        # ------------------- Cobweb plot -------------------
+        elif t == "Cobweb plot":
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                formula = str(x[0])
+            else:
+                formula = data.get('z') or "r * x * (1 - x)"
+            if not isinstance(formula, str) or not formula.strip():
+                formula = "r * x * (1 - x)"
+            formula = formula.strip()
+
+            y_arr = np.array(y, dtype=float) if y else np.array([0.2, 20.0])
+            x0 = float(y_arr[0]) if len(y_arr) >= 1 else 0.2
+            N = int(y_arr[1]) if len(y_arr) >= 2 else 20
+            N = max(3, min(200, N))
+
+            xmin = min(0.0, x0)
+            xmax = max(1.0, x0)
+            xs = np.linspace(xmin, xmax, 300)
+
+            sd = {
+                'x': xs,
+                'sin': np.sin, 'cos': np.cos, 'tan': np.tan,
+                'exp': np.exp, 'log': np.log, 'sqrt': np.sqrt,
+                'abs': np.abs, 'pi': np.pi, 'e': np.e,
+                'power': np.power,
+            }
+            try:
+                ys_curve = eval(formula, {"__builtins__": {}}, sd)
+                ys_curve = np.broadcast_to(ys_curve, xs.shape)
+            except Exception as e:
+                base_ax.text(0.5, 0.5, f"Formula error:\n{e}",
+                             transform=base_ax.transAxes,
+                             ha='center', color='red')
+                return None
+
+            artists = []
+            diag, = base_ax.plot([xmin, xmax], [xmin, xmax],
+                                  color='gray', lw=0.8, ls='--',
+                                  label='y = x', zorder=1)
+            artists.append(diag)
+            curve, = base_ax.plot(xs, ys_curve, color=c, lw=lw,
+                                   label=f"y = {formula}", zorder=2)
+            artists.append(curve)
+
+            xv = x0
+            sd_scalar = dict(sd)
+            for i in range(N):
+                sd_scalar['x'] = xv
+                try:
+                    yv = float(eval(formula,
+                                     {"__builtins__": {}},
+                                     sd_scalar))
+                except Exception:
+                    break
+                ln1, = base_ax.plot([xv, xv], [xv, yv],
+                                     color='red', lw=0.6, alpha=0.6,
+                                     zorder=3)
+                ln2, = base_ax.plot([xv, yv], [yv, yv],
+                                     color='red', lw=0.6, alpha=0.6,
+                                     zorder=3)
+                artists.extend([ln1, ln2])
+                xv = yv
+                if xv < xmin - 1 or xv > xmax + 1 or not np.isfinite(xv):
+                    break
+
+            base_ax.set_xlabel("x[n]")
+            base_ax.set_ylabel("x[n+1]")
+            base_ax.legend(fontsize=8, loc='best')
+
+            data['_extra_artists'] = artists
+            artist = curve
+
+        # ------------------- Poincaré plot -------------------
+        elif t == "Poincaré plot":
+            y_arr = np.array(y, dtype=float)
+            y_arr = y_arr[np.isfinite(y_arr)]
+            if len(y_arr) < 4:
+                return None
+            tau = max(1, int(data.get('bins', 1)))
+            x1 = y_arr[:-tau]
+            y1 = y_arr[tau:]
+            n = len(x1)
+            if n < 2:
+                return None
+            main = base_ax.scatter(
+                x1, y1, s=max(10, ms ** 2 * 0.5), color=c,
+                alpha=0.6, edgecolors='none',
+                label=lbl, zorder=3)
+            lo = min(x1.min(), y1.min())
+            hi = max(x1.max(), y1.max())
+            diag, = base_ax.plot([lo, hi], [lo, hi], '--',
+                                  color='gray', lw=1.0, alpha=0.7)
+            base_ax.set_xlabel("Y(t)")
+            base_ax.set_ylabel(f"Y(t + {tau})")
+            data['_extra_artists'] = [diag]
+            artist = main
+
+        # ------------------- Phase portrait -------------------
+        elif t == "Phase portrait":
+            y_arr = np.array(y, dtype=float)
+            if len(y_arr) < 3:
+                return None
+            x_arr = (np.array(x, dtype=float)
+                     if x and len(x) == len(y_arr)
+                     else np.arange(len(y_arr)))
+            try:
+                dy = np.gradient(y_arr, x_arr)
+            except Exception:
+                dy = np.gradient(y_arr)
+            line, = base_ax.plot(y_arr, dy, '-',
+                                 color=c, lw=lw, alpha=0.7,
+                                 label=lbl)
+            start = base_ax.scatter(
+                [y_arr[0]], [dy[0]],
+                s=max(40, ms ** 2 * 2), color='green',
+                edgecolors='black', zorder=5, label='Начало')
+            end = base_ax.scatter(
+                [y_arr[-1]], [dy[-1]],
+                s=max(40, ms ** 2 * 2), color='red',
+                edgecolors='black', zorder=5, label='Конец')
+
+            formula = data.get('z')
+            if isinstance(formula, str) and formula.strip():
+                try:
+                    yg = np.linspace(y_arr.min(), y_arr.max(), 20)
+                    dg = np.linspace(dy.min(), dy.max(), 20)
+                    Yg, Dg = np.meshgrid(yg, dg)
+                    sd_p = {
+                        'y': Yg, 'dy': Dg, 'x': Yg,
+                        'sin': np.sin, 'cos': np.cos,
+                        'exp': np.exp, 'sqrt': np.sqrt,
+                        'abs': np.abs, 'pi': np.pi,
+                    }
+                    dY = eval(formula, {"__builtins__": {}}, sd_p)
+                    base_ax.streamplot(
+                        yg, dg, Yg * 0 + dY, Dg * 0 - Dg,
+                        color='#ccc', density=0.8, arrowsize=0.8,
+                        linewidth=0.5)
+                except Exception:
+                    pass
+
+            base_ax.set_xlabel("Y")
+            base_ax.set_ylabel("dY/dX")
+            base_ax.legend(fontsize=8, loc='best')
+            data['_extra_artists'] = [start, end]
+            artist = line
+
+        # ------------------- Dot plot -------------------
+        elif t == "Dot plot":
+            if not y:
+                return None
+            y_arr = np.array(y, dtype=float)
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                x_arr = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                x_arr = [str(v) for v in data['pie_labels']]
+            else:
+                x_arr = [f"C{i+1}" for i in range(len(y_arr))]
+            n = min(len(x_arr), len(y_arr))
+            y_arr = y_arr[:n]
+            x_arr = x_arr[:n]
+            order = np.argsort(y_arr)
+            y_sorted = y_arr[order]
+            x_sorted = [x_arr[i] for i in order]
+            ys = np.arange(len(y_sorted))
+
+            artists = []
+            for i, v in enumerate(y_sorted):
+                ln, = base_ax.plot([0, v], [i, i],
+                                    color='#ccc', lw=1.0, zorder=1)
+                artists.append(ln)
+            sc = base_ax.scatter(
+                y_sorted, ys, s=max(40, ms ** 2 * 3),
+                color=c, edgecolors='black', linewidths=0.8,
+                zorder=3, label=lbl)
+            artists.append(sc)
+
+            base_ax.set_yticks(ys)
+            base_ax.set_yticklabels([str(v) for v in x_sorted])
+            vmax = max(y_sorted) if len(y_sorted) else 1.0
+            base_ax.set_xlim(0, vmax * 1.05 if vmax > 0 else 1.0)
+            base_ax.set_ylim(-0.7, len(y_sorted) - 0.3)
+            try:
+                base_ax.spines['top'].set_visible(False)
+                base_ax.spines['right'].set_visible(False)
+            except Exception:
+                pass
+
+            data['_extra_artists'] = artists
+            artist = sc
+
+        # ------------------- Lollipop -------------------
+        elif t == "Lollipop":
+            if not y:
+                return None
+            y_arr = np.array(y, dtype=float)
+            if x:
+                x_arr = np.array(x, dtype=float)
+            else:
+                x_arr = np.arange(len(y_arr), dtype=float)
+            n = min(len(x_arr), len(y_arr))
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+
+            artists = []
+            for xi, yi in zip(x_arr, y_arr):
+                ln, = base_ax.plot([xi, xi], [0, yi],
+                                    color=c, lw=1.2, alpha=0.7,
+                                    zorder=2)
+                artists.append(ln)
+            sc = base_ax.scatter(
+                x_arr, y_arr, s=max(60, ms ** 2 * 4),
+                color=c, edgecolors='white', linewidths=1.5,
+                zorder=3, label=lbl)
+            artists.append(sc)
+            base_ax.axhline(0, color='#888', lw=0.6, zorder=1)
+
+            data['_extra_artists'] = artists
+            artist = sc
+
+        # ------------------- Пирамида -------------------
+        elif t == "Пирамида":
+            y_arr = np.array(y, dtype=float) if y else None
+            z_arr = np.array(data.get('z', []), dtype=float)
+            if y_arr is None or len(z_arr) == 0:
+                return None
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                labels = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                labels = [str(v) for v in data['pie_labels']]
+            else:
+                labels = [f"C{i+1}" for i in range(len(y_arr))]
+            n = min(len(y_arr), len(z_arr))
+            y_arr = y_arr[:n]
+            z_arr = z_arr[:n]
+            if len(labels) < n:
+                labels = labels + [f"C{i+1}" for i in range(len(labels), n)]
+            labels = labels[:n]
+
+            ys = np.arange(n)
+            artists = []
+            bars_r = base_ax.barh(ys, y_arr, color=c,
+                                    edgecolor='white', alpha=0.9,
+                                    zorder=2)
+            artists.append(bars_r)
+            bars_l = base_ax.barh(ys, -z_arr, color='#e74c3c',
+                                    edgecolor='white', alpha=0.9,
+                                    zorder=2)
+            artists.append(bars_l)
+
+            base_ax.set_yticks(ys)
+            base_ax.set_yticklabels(labels)
+            base_ax.axvline(0, color='black', lw=1.0, zorder=3)
+
+            for i in range(n):
+                base_ax.text(y_arr[i], i, f" {y_arr[i]:g}",
+                             ha='left', va='center',
+                             fontsize=8, color=c)
+                base_ax.text(-z_arr[i], i, f"{z_arr[i]:g} ",
+                             ha='right', va='center',
+                             fontsize=8, color='#e74c3c')
+
+            try:
+                base_ax.xaxis.set_major_formatter(
+                    mpl.ticker.FuncFormatter(
+                        lambda v, p: f"{abs(v):g}"))
+            except Exception:
+                pass
+
+            data['_extra_artists'] = artists
+            artist = bars_r
+
+        # ------------------- Sparkline -------------------
+        elif t == "Sparkline":
+            y_arr = np.array(y, dtype=float)
+            if len(y_arr) < 2:
+                return None
+            if x and len(x) == len(y_arr):
+                x_arr = np.array(x, dtype=float)
+            else:
+                x_arr = np.arange(len(y_arr), dtype=float)
+
+            line, = base_ax.plot(x_arr, y_arr, '-',
+                                  color=c, lw=max(1.0, lw),
+                                  label=lbl, zorder=3)
+
+            i_min = int(np.argmin(y_arr))
+            i_max = int(np.argmax(y_arr))
+            base_ax.scatter([x_arr[i_min]], [y_arr[i_min]],
+                             s=max(20, ms ** 2), color='red',
+                             zorder=5)
+            base_ax.scatter([x_arr[i_max]], [y_arr[i_max]],
+                             s=max(20, ms ** 2), color='green',
+                             zorder=5)
+
+            try:
+                ylo = y_arr.min()
+                yhi = y_arr.max()
+                pad = (yhi - ylo) * 0.1 or 1.0
+                base_ax.fill_between(x_arr, ylo - pad, y_arr,
+                                      color=c, alpha=0.12, zorder=1)
+            except Exception:
+                pass
+
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            for sp in base_ax.spines.values():
+                try:
+                    sp.set_visible(False)
+                except Exception:
+                    pass
+
+            artist = line
+
+        # ------------------- Cycle plot -------------------
+        elif t == "Cycle plot":
+            if not x or not y:
+                return None
+            x_arr = np.array(x, dtype=float)
+            y_arr = np.array(y, dtype=float)
+            n = min(len(x_arr), len(y_arr))
+            x_arr = x_arr[:n]
+            y_arr = y_arr[:n]
+
+            z_raw = data.get('z', [])
+            if z_raw and len(z_raw) >= n:
+                z_arr = np.array(z_raw[:n], dtype=float)
+            else:
+                z_arr = np.arange(n, dtype=float)
+
+            periods = sorted(set(x_arr))
+            cycles = sorted(set(z_arr))
+            cmap = plt.get_cmap('tab10')
+            artists = []
+
+            for ci, cyc in enumerate(cycles):
+                mask = z_arr == cyc
+                if not mask.any():
+                    continue
+                xs = x_arr[mask]
+                ys_ = y_arr[mask]
+                order = np.argsort(xs)
+                color_i = cmap(ci % 10)
+                ln, = base_ax.plot(
+                    xs[order], ys_[order], '-o',
+                    color=color_i, lw=lw,
+                    markersize=max(3, ms * 0.5),
+                    alpha=0.85,
+                    label=f"Цикл {int(cyc) + 1}"
+                    if ci < 10 else None,
+                    zorder=3)
+                artists.append(ln)
+
+            if len(periods) > 1:
+                step = periods[1] - periods[0]
+                for p in periods:
+                    base_ax.axvline(p - step / 2,
+                                     color='#ccc', lw=0.5,
+                                     ls='--', zorder=0)
+
+            base_ax.set_xticks(periods)
+            if artists:
+                try:
+                    base_ax.legend(fontsize=8, ncol=2, loc='best')
+                except Exception:
+                    pass
+                artist = artists[0]
+                data['_extra_artists'] = artists[1:]
+            else:
+                artist = None
+
+        # ------------------- Bump chart -------------------
+        elif t == "Bump chart":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim == 1:
+                Z = Z.reshape(1, -1)
+            n_part, n_time = Z.shape
+            if n_part < 1 or n_time < 2:
+                return None
+
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                time_labels = [str(v) for v in x]
+            elif data.get('col_labels'):
+                time_labels = list(data['col_labels'])
+            else:
+                time_labels = [f"T{i+1}" for i in range(n_time)]
+            while len(time_labels) < n_time:
+                time_labels.append(f"T{len(time_labels)+1}")
+            time_labels = time_labels[:n_time]
+
+            part_labels = data.get('pie_labels') or []
+            while len(part_labels) < n_part:
+                part_labels.append(f"P{len(part_labels)+1}")
+            part_labels = part_labels[:n_part]
+
+            cmap_b = plt.get_cmap('tab10')
+            artists = []
+            xs = np.arange(n_time)
+
+            for i in range(n_part):
+                y_a = Z[i]
+                color_i = cmap_b(i % 10)
+                ln, = base_ax.plot(
+                    xs, y_a, '-o',
+                    color=color_i, lw=max(1.0, lw),
+                    markersize=max(5, ms * 0.8),
+                    label=str(part_labels[i]),
+                    zorder=3)
+                artists.append(ln)
+                t_l = base_ax.text(
+                    xs[0] - 0.15, y_a[0],
+                    str(part_labels[i]),
+                    ha='right', va='center',
+                    fontsize=8, color=color_i)
+                t_r = base_ax.text(
+                    xs[-1] + 0.15, y_a[-1],
+                    str(part_labels[i]),
+                    ha='left', va='center',
+                    fontsize=8, color=color_i)
+                artists.extend([t_l, t_r])
+
+            base_ax.set_xticks(xs)
+            base_ax.set_xticklabels(time_labels)
+            base_ax.invert_yaxis()
+            base_ax.set_ylabel("Ранг")
+            base_ax.set_title("Bump chart (гонка рангов)")
+            base_ax.grid(True, axis='x', ls='--', alpha=0.4)
+            try:
+                base_ax.spines['top'].set_visible(False)
+                base_ax.spines['right'].set_visible(False)
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Slopegraph -------------------
+        elif t == "Slopegraph":
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(y_arr), len(z_arr))
+            if n < 1:
+                return None
+            y_arr = y_arr[:n]
+            z_arr = z_arr[:n]
+
+            if isinstance(x, list) and len(x) >= 2:
+                lbl_a = str(x[0])
+                lbl_b = str(x[1])
+            else:
+                lbl_a = "До"
+                lbl_b = "После"
+
+            part_labels = data.get('pie_labels') or []
+            while len(part_labels) < n:
+                part_labels.append(f"P{len(part_labels)+1}")
+            part_labels = part_labels[:n]
+
+            cmap_s = plt.get_cmap('tab10')
+            artists = []
+
+            for i in range(n):
+                color_i = cmap_s(i % 10)
+                ln, = base_ax.plot(
+                    [0, 1], [y_arr[i], z_arr[i]],
+                    '-o', color=color_i,
+                    lw=max(1.0, lw), markersize=max(5, ms * 0.8),
+                    label=str(part_labels[i]),
+                    zorder=3)
+                artists.append(ln)
+                t_l = base_ax.text(
+                    -0.05, y_arr[i],
+                    f"{part_labels[i]} ({y_arr[i]:g})",
+                    ha='right', va='center',
+                    fontsize=8, color=color_i)
+                t_r = base_ax.text(
+                    1.05, z_arr[i],
+                    f"({z_arr[i]:g}) {part_labels[i]}",
+                    ha='left', va='center',
+                    fontsize=8, color=color_i)
+                artists.extend([t_l, t_r])
+
+            base_ax.set_xticks([0, 1])
+            base_ax.set_xticklabels([lbl_a, lbl_b])
+            base_ax.set_xlim(-0.4, 1.4)
+            base_ax.set_title("Slopegraph")
+            try:
+                base_ax.spines['top'].set_visible(False)
+                base_ax.spines['right'].set_visible(False)
+                base_ax.spines['bottom'].set_visible(False)
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Dumbbell plot -------------------
+        elif t == "Dumbbell plot":
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(y_arr), len(z_arr))
+            if n < 1:
+                return None
+            y_arr = y_arr[:n]
+            z_arr = z_arr[:n]
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                labels = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                labels = [str(v) for v in data['pie_labels']]
+            else:
+                labels = [f"C{i+1}" for i in range(n)]
+            while len(labels) < n:
+                labels.append(f"C{len(labels)+1}")
+            labels = labels[:n]
+
+            artists = []
+            ys = np.arange(n)
+            for i in range(n):
+                v1, v2 = y_arr[i], z_arr[i]
+                lo, hi = (v1, v2) if v1 <= v2 else (v2, v1)
+                ln, = base_ax.plot([lo, hi], [i, i],
+                                    color='#ccc', lw=2.5,
+                                    zorder=1)
+                artists.append(ln)
+                s1 = base_ax.scatter(
+                    [v1], [i], s=max(50, ms ** 2 * 3),
+                    color='#3498db', edgecolors='white',
+                    linewidths=1.0, zorder=3)
+                artists.append(s1)
+                s2 = base_ax.scatter(
+                    [v2], [i], s=max(50, ms ** 2 * 3),
+                    color='#e74c3c', edgecolors='white',
+                    linewidths=1.0, zorder=3)
+                artists.append(s2)
+                t1 = base_ax.text(
+                    v1, i - 0.2, f"{v1:g}",
+                    ha='center', va='bottom',
+                    fontsize=7, color='#3498db')
+                t2 = base_ax.text(
+                    v2, i + 0.2, f"{v2:g}",
+                    ha='center', va='top',
+                    fontsize=7, color='#e74c3c')
+                artists.extend([t1, t2])
+
+            base_ax.set_yticks(ys)
+            base_ax.set_yticklabels(labels)
+            base_ax.set_ylim(-0.5, n - 0.5)
+            base_ax.set_title("Dumbbell plot")
+            try:
+                base_ax.spines['top'].set_visible(False)
+                base_ax.spines['right'].set_visible(False)
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Bar of pie -------------------
+        elif t == "Bar of pie":
+            y_arr = np.array(y, dtype=float)
+            if len(y_arr) < 2:
+                return None
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                labels = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                labels = [str(v) for v in data['pie_labels']]
+            else:
+                labels = [f"C{i+1}" for i in range(len(y_arr))]
+            while len(labels) < len(y_arr):
+                labels.append(f"C{len(labels)+1}")
+            labels = labels[:len(y_arr)]
+
+            n_out = max(1, min(len(y_arr) - 1,
+                                int(data.get('bins', 3))))
+            big_vals = y_arr[:n_out]
+            big_labels = labels[:n_out]
+            small_vals = y_arr[n_out:]
+            small_labels = labels[n_out:]
+
+            pc = [cc for cc in data.get('pie_colors', [])
+                  if mcolors.is_color_like(cc)]
+            if len(pc) != len(y_arr):
+                cmap = plt.get_cmap('tab10')
+                pc = [cmap(i % 10) for i in range(len(y_arr))]
+            big_colors = pc[:n_out]
+            small_colors = pc[n_out:]
+
+            pie_vals = list(small_vals) + [big_vals.sum()]
+            pie_labels = list(small_labels) + ['...']
+            pie_colors_all = list(small_colors) + ['#cccccc']
+
+            artists = []
+            try:
+                wedges, texts, autotexts = base_ax.pie(
+                    pie_vals,
+                    labels=pie_labels,
+                    colors=pie_colors_all,
+                    autopct='%1.1f%%',
+                    radius=0.7,
+                    center=(0.6, 0.5),
+                    wedgeprops=dict(edgecolor='white',
+                                     linewidth=1.0))
+                for t_ in texts:
+                    t_.set_fontsize(8)
+                for t_ in autotexts:
+                    t_.set_fontsize(7)
+                artists.extend(wedges)
+            except Exception:
+                return None
+
+            n_bars = len(big_vals)
+            bar_x = -0.3
+            bar_w = 0.15
+            total_big = big_vals.sum()
+            cum = 0.0
+            bar_height_total = 0.7
+            for i in range(n_bars):
+                h = (big_vals[i] / total_big) * bar_height_total
+                rect = plt.Rectangle(
+                    (bar_x - bar_w / 2, 0.5 - bar_height_total / 2 + cum),
+                    bar_w, h,
+                    facecolor=big_colors[i],
+                    edgecolor='white', linewidth=1.0,
+                    zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+                cum += h
+                if h > 0.03:
+                    t_lbl = base_ax.text(
+                        bar_x, 0.5 - bar_height_total / 2 + cum - h / 2,
+                        f"{big_labels[i]}\n{big_vals[i]:g}",
+                        ha='center', va='center',
+                        fontsize=8, zorder=4)
+                    artists.append(t_lbl)
+
+            try:
+                conn1, = base_ax.plot(
+                    [bar_x + bar_w / 2, 0.05],
+                    [0.5 - bar_height_total / 2,
+                     pie_vals[-1] / sum(pie_vals) * 0.5 + 0.3],
+                    color='#999', lw=0.8, zorder=1)
+                conn2, = base_ax.plot(
+                    [bar_x + bar_w / 2, 0.05],
+                    [0.5 + bar_height_total / 2,
+                     0.5 - pie_vals[-1] / sum(pie_vals) * 0.5],
+                    color='#999', lw=0.8, zorder=1)
+                artists.extend([conn1, conn2])
+            except Exception:
+                pass
+
+            base_ax.set_xlim(-0.6, 1.4)
+            base_ax.set_ylim(-0.1, 1.1)
+            base_ax.set_aspect('equal')
+            base_ax.set_title("Bar of pie")
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Ribbon plot 2D -------------------
+        elif t == "Ribbon plot 2D":
+            x_arr = np.array(x, dtype=float) if x else np.array([])
+            y_arr = np.array(y, dtype=float) if y else np.array([])
+            z_arr = np.array(data.get('z', []), dtype=float)
+            n = min(len(x_arr), len(y_arr), len(z_arr))
+            if n < 2:
+                return None
+            x_arr = x_arr[:n]
+            y_top = y_arr[:n]
+            y_bot = z_arr[:n]
+
+            artists = []
+            fill = base_ax.fill_between(
+                x_arr, y_bot, y_top,
+                color=c, alpha=0.35,
+                label=lbl, zorder=2)
+            artists.append(fill)
+            top_line, = base_ax.plot(
+                x_arr, y_top, '-',
+                color=c, lw=max(1.0, lw),
+                zorder=3)
+            artists.append(top_line)
+            bot_line, = base_ax.plot(
+                x_arr, y_bot, '--',
+                color=c, lw=max(0.7, lw * 0.7),
+                alpha=0.8, zorder=3)
+            artists.append(bot_line)
+
+            base_ax.set_title("Ribbon plot 2D")
+            try:
+                base_ax.legend(fontsize=8, loc='best')
+            except Exception:
+                pass
+
+            artist = artists[0]
+            data['_extra_artists'] = artists[1:]
+
+        # ------------------- Bullet chart -------------------
+        elif t == "Bullet chart":
+            vals = np.array(y, dtype=float)
+            if len(vals) < 1:
+                return None
+            value = float(vals[0])
+            target = float(vals[1]) if len(vals) >= 2 else None
+            vmax = float(vals[2]) if len(vals) >= 3 else max(
+                value, target or value) * 1.2
+            if vmax <= 0:
+                vmax = 1.0
+
+            title = ""
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                title = str(x[0])
+            elif data.get('pie_labels'):
+                title = str(data['pie_labels'][0])
+
+            n_zones = max(1, int(data.get('bins', 3)))
+            zones = np.linspace(vmax, 0, n_zones + 1)
+            cmap_g = plt.get_cmap('Greys_r')
+            artists = []
+
+            bar_h = 0.5
+            for i in range(n_zones):
+                x0 = zones[i + 1]
+                w = zones[i] - zones[i + 1]
+                rect = plt.Rectangle(
+                    (x0, 0.5 - bar_h / 2), w, bar_h,
+                    facecolor=cmap_g(0.15 + 0.15 * i),
+                    edgecolor='white', linewidth=0.6, zorder=1)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+
+            v_rect = plt.Rectangle(
+                (0, 0.5 - bar_h / 3), value, bar_h / 1.5,
+                facecolor=c, edgecolor='none', zorder=3)
+            base_ax.add_patch(v_rect)
+            artists.append(v_rect)
+
+            if target is not None:
+                tgt_line, = base_ax.plot(
+                    [target, target], [0.5 - bar_h / 2,
+                                       0.5 + bar_h / 2],
+                    color='black', lw=2.5, zorder=4)
+                artists.append(tgt_line)
+                tgt_txt = base_ax.text(
+                    target, 0.5 + bar_h / 2 + 0.05,
+                    f"Цель: {target:.4g}",
+                    ha='center', va='bottom', fontsize=8)
+                artists.append(tgt_txt)
+
+            v_txt = base_ax.text(
+                value, 0.5 - bar_h / 2 - 0.08,
+                f"{value:.4g}",
+                ha='center', va='top', fontsize=9,
+                fontweight='bold')
+            artists.append(v_txt)
+
+            base_ax.set_xlim(0, vmax * 1.05)
+            base_ax.set_ylim(0, 1)
+            base_ax.set_yticks([])
+            if title:
+                base_ax.set_title(title)
+            try:
+                base_ax.spines['top'].set_visible(False)
+                base_ax.spines['right'].set_visible(False)
+                base_ax.spines['left'].set_visible(False)
+            except Exception:
+                pass
+
+            artist = artists[0]
+            data['_extra_artists'] = artists[1:]
+
+        # ------------------- Funnel chart -------------------
+        elif t == "Funnel chart":
+            vals = np.array(y, dtype=float)
+            if len(vals) == 0:
+                return None
+            n = len(vals)
+            labels = []
+            if isinstance(x, list) and x and isinstance(x[0], str):
+                labels = [str(v) for v in x]
+            elif data.get('pie_labels'):
+                labels = [str(v) for v in data['pie_labels']]
+            while len(labels) < n:
+                labels.append(f"Этап {len(labels) + 1}")
+
+            colors_f = [cc for cc in data.get('pie_colors', [])
+                        if mcolors.is_color_like(cc)]
+            if len(colors_f) != n:
+                cmap = plt.get_cmap('viridis')
+                colors_f = [cmap(i / max(n - 1, 1)) for i in range(n)]
+
+            vmax = float(vals.max())
+            if vmax <= 0:
+                vmax = 1.0
+
+            artists = []
+            bar_h = 0.7
+            for i, v in enumerate(vals):
+                y_pos = (n - 1 - i) * 1.0
+                w = v / vmax
+                x0 = (1 - w) / 2
+                rect = plt.Rectangle(
+                    (x0, y_pos), w, bar_h,
+                    facecolor=colors_f[i], edgecolor='white',
+                    linewidth=1.2, zorder=3)
+                base_ax.add_patch(rect)
+                artists.append(rect)
+                lbl_txt = base_ax.text(
+                    -0.02, y_pos + bar_h / 2,
+                    labels[i], ha='right', va='center',
+                    fontsize=9)
+                artists.append(lbl_txt)
+                pct = v / vals[0] * 100 if vals[0] > 0 else 0
+                val_txt = base_ax.text(
+                    x0 + w / 2, y_pos + bar_h / 2,
+                    f"{v:.4g}  ({pct:.1f}%)",
+                    ha='center', va='center',
+                    color='white', fontsize=10,
+                    fontweight='bold', zorder=4)
+                artists.append(val_txt)
+
+            base_ax.set_xlim(-0.35, 1.05)
+            base_ax.set_ylim(-0.2, n)
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            try:
+                base_ax.axis('off')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Календарная теплокарта -------------------
+        elif t == "Календарная теплокарта":
+            vals = np.array(y, dtype=float)
+            if len(vals) < 1:
+                return None
+            n_days = 365
+            if len(vals) < n_days:
+                vals = np.concatenate([vals,
+                                        np.zeros(n_days - len(vals))])
+            else:
+                vals = vals[:n_days]
+
+            year = 2025
+            if len(x) >= 1:
+                try:
+                    year = int(float(x[0]))
+                except (ValueError, TypeError):
+                    pass
+            try:
+                from datetime import date
+                jan1 = date(year, 1, 1)
+                start_offset = jan1.weekday()
+            except Exception:
+                start_offset = 0
+
+            grid = np.zeros((7, 53))
+            for i, v in enumerate(vals):
+                day_idx = start_offset + i
+                week = day_idx // 7
+                wday = day_idx % 7
+                if week < 53:
+                    grid[wday, week] = v
+
+            cmap_c = plt.get_cmap('YlGn')
+            artist = base_ax.imshow(
+                grid, cmap=cmap_c, aspect='auto',
+                interpolation='nearest')
+
+            try:
+                from datetime import date
+                month_positions = []
+                month_names = ['Янв', 'Фев', 'Мар', 'Апр', 'Май',
+                                'Июн', 'Июл', 'Авг', 'Сен', 'Окт',
+                                'Ноя', 'Дек']
+                for m in range(1, 13):
+                    d = date(year, m, 1)
+                    day_idx = (d - date(year, 1, 1)).days
+                    col = (start_offset + day_idx) // 7
+                    if col < 53:
+                        month_positions.append((col, month_names[m - 1]))
+                base_ax.set_xticks([p[0] for p in month_positions])
+                base_ax.set_xticklabels([p[1] for p in month_positions],
+                                         fontsize=8)
+            except Exception:
+                pass
+
+            base_ax.set_yticks([0, 2, 4, 6])
+            base_ax.set_yticklabels(['Пн', 'Ср', 'Пт', 'Вс'],
+                                     fontsize=8)
+            base_ax.set_title(f"{year}")
+
+            try:
+                cb = base_ax.figure.colorbar(artist, ax=base_ax,
+                                              shrink=0.6, pad=0.02)
+                data['_extra_artists'] = [cb]
+            except Exception:
+                pass
+
+        # ------------------- Полярная теплокарта -------------------
+        elif t == "Полярная теплокарта":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim == 1:
+                Z = Z.reshape(1, -1)
+            m, n = Z.shape
+            x_arr = np.array(x, dtype=float) if x else np.arange(n)
+            y_arr = np.array(y, dtype=float) if y else np.arange(m)
+            if len(x_arr) != n:
+                x_arr = np.linspace(0, 360, n)
+            if len(y_arr) != m:
+                y_arr = np.linspace(0, 1, m)
+
+            theta_edges = np.deg2rad(np.linspace(x_arr.min(),
+                                                   x_arr.max(),
+                                                   n + 1))
+            r_edges = (np.linspace(y_arr.min(), y_arr.max(), m + 1)
+                       if m > 1 else np.array([0, y_arr[0] or 1]))
+            TH, R = np.meshgrid(theta_edges, r_edges)
+
+            if getattr(base_ax, 'name', '') != 'polar':
+                base_ax.text(0.5, 0.5,
+                             'Полярная теплокарта требует полярной оси.',
+                             transform=base_ax.transAxes,
+                             ha='center', va='center', color='orange',
+                             fontsize=10)
+                return None
+
+            artist = base_ax.pcolormesh(TH, R, Z,
+                                          cmap='viridis',
+                                          shading='flat')
+            try:
+                base_ax.set_theta_zero_location('N')
+                base_ax.set_theta_direction(-1)
+            except Exception:
+                pass
+            try:
+                cb = base_ax.figure.colorbar(artist, ax=base_ax,
+                                              shrink=0.6, pad=0.1)
+                data['_extra_artists'] = [cb]
+            except Exception:
+                pass
+
+        # ------------------- Диаграмма бифуркаций -------------------
+        elif t == "Диаграмма бифуркаций":
+            if len(x) >= 2:
+                r_min = float(x[0])
+                r_max = float(x[-1])
+            elif len(x) == 1:
+                r_min, r_max = 2.5, float(x[0])
+            else:
+                r_min, r_max = 2.5, 4.0
+            if r_max <= r_min:
+                r_min, r_max = 2.5, 4.0
+            x0 = float(y[0]) if y else 0.5
+            n_r = max(50, min(2000, int(data.get('bins', 500))))
+            n_warmup = 300
+            n_keep = 100
+
+            r_vals = np.linspace(r_min, r_max, n_r)
+            rs_list = []
+            xs_list = []
+
+            for r in r_vals:
+                xv = x0
+                for _ in range(n_warmup):
+                    xv = r * xv * (1 - xv)
+                for _ in range(n_keep):
+                    xv = r * xv * (1 - xv)
+                    rs_list.append(r)
+                    xs_list.append(xv)
+
+            if not rs_list:
+                return None
+            artist = base_ax.scatter(
+                rs_list, xs_list,
+                s=max(0.5, ms * 0.05),
+                color=c, alpha=0.6,
+                edgecolors='none', label=lbl, zorder=3)
+            base_ax.set_xlabel("r")
+            base_ax.set_ylabel("x")
+            base_ax.set_title(
+                f"Логистическое отображение, x0 = {x0:.3g}")
+
+        # ------------------- Параллельные координаты -------------------
+        elif t == "Parallel coordinates":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim != 2:
+                return None
+            n_obs, n_axes = Z.shape
+            if n_axes < 2:
+                return None
+
+            axis_labels = data.get('pie_labels') or \
+                [f"A{i+1}" for i in range(n_axes)]
+
+            mn = Z.min(axis=0)
+            mx = Z.max(axis=0)
+            rng_v = np.where(mx > mn, mx - mn, 1.0)
+            Zn = (Z - mn) / rng_v
+
+            cmap = plt.get_cmap('tab10')
+            artists = []
+            xs = np.arange(n_axes)
+            for i in range(n_obs):
+                color_i = cmap(i % 10)
+                ln, = base_ax.plot(
+                    xs, Zn[i], '-', color=color_i, lw=lw,
+                    alpha=0.7,
+                    label=lbl if i == 0 else None)
+                artists.append(ln)
+
+            for j in range(n_axes):
+                ax_line, = base_ax.plot(
+                    [j, j], [0, 1], color='gray', lw=1.0,
+                    zorder=0)
+                artists.append(ax_line)
+                t_top = base_ax.text(
+                    j, 1.02, str(axis_labels[j]),
+                    ha='center', va='bottom', fontsize=9)
+                artists.append(t_top)
+                t_min = base_ax.text(
+                    j, -0.02, f"{mn[j]:.3g}",
+                    ha='center', va='top', fontsize=7,
+                    color='gray')
+                t_max = base_ax.text(
+                    j, 1.03, f"{mx[j]:.3g}",
+                    ha='center', va='bottom', fontsize=7,
+                    color='gray')
+                artists.extend([t_min, t_max])
+
+            base_ax.set_xticks([])
+            base_ax.set_yticks([])
+            base_ax.set_xlim(-0.5, n_axes - 0.5)
+            base_ax.set_ylim(-0.1, 1.15)
+            try:
+                base_ax.spines['top'].set_visible(False)
+                base_ax.spines['right'].set_visible(False)
+                base_ax.spines['bottom'].set_visible(False)
+                base_ax.spines['left'].set_visible(False)
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Radar chart -------------------
+        elif t == "Radar chart":
+            raw = data.get('heatmap_data', [])
+            if not raw:
+                return None
+            try:
+                Z = np.array(raw, dtype=float)
+            except Exception:
+                return None
+            if Z.ndim != 2:
+                return None
+            n_series, n_axes = Z.shape
+            if n_axes < 3:
+                return None
+
+            axis_labels = data.get('pie_labels') or \
+                [f"A{i+1}" for i in range(n_axes)]
+
+            angles = np.linspace(0, 2 * np.pi, n_axes, endpoint=False)
+            angles = np.concatenate([angles, [angles[0]]])
+
+            cmap = plt.get_cmap('tab10')
+            artists = []
+            for i in range(n_series):
+                vals = np.concatenate([Z[i], [Z[i][0]]])
+                color_i = cmap(i % 10)
+                ln, = base_ax.plot(
+                    angles, vals, '-o', color=color_i,
+                    lw=lw, markersize=max(3, ms * 0.5),
+                    label=f"{lbl} #{i+1}" if n_series > 1 else lbl)
+                artists.append(ln)
+                if n_series <= 3:
+                    fill = base_ax.fill(
+                        angles, vals, color=color_i, alpha=0.15)
+                    artists.append(fill)
+
+            base_ax.set_xticks(angles[:-1])
+            try:
+                base_ax.set_xticklabels(axis_labels)
+            except Exception:
+                pass
+            base_ax.set_ylim(0, Z.max() * 1.1)
+            base_ax.legend(fontsize=8, loc='upper right',
+                            bbox_to_anchor=(1.3, 1.1))
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- Спидометр -------------------
+        elif t == "Спидометр":
+            vals = np.array(y, dtype=float)
+            if len(vals) == 0:
+                return None
+            value = float(vals[0])
+
+            if len(x) >= 2:
+                vmin = float(x[0])
+                vmax = float(x[1])
+            elif len(x) == 1:
+                vmin = 0.0
+                vmax = float(x[0])
+            else:
+                vmin, vmax = 0.0, 100.0
+            if vmax <= vmin:
+                vmax = vmin + 1.0
+
+            value_clipped = max(vmin, min(vmax, value))
+
+            n_zones = max(1, int(data.get('bins', 5)))
+            start_angle = np.pi
+            end_angle = 0.0
+            zone_edges = np.linspace(start_angle, end_angle,
+                                       n_zones + 1)
+            cmap_z = plt.get_cmap('RdYlGn_r')
+            r_inner = 0.6
+            r_outer = 1.0
+
+            artists = []
+            from matplotlib.patches import Polygon
+            for i in range(n_zones):
+                a1, a2 = zone_edges[i], zone_edges[i + 1]
+                th = np.linspace(a1, a2, 40)
+                outer = list(zip(np.cos(th) * r_outer,
+                                 np.sin(th) * r_outer))
+                inner = list(zip(np.cos(th[::-1]) * r_inner,
+                                 np.sin(th[::-1]) * r_inner))
+                poly = Polygon(outer + inner, closed=True,
+                               facecolor=cmap_z(i / max(n_zones - 1, 1)),
+                               edgecolor='white',
+                               linewidth=1.0, zorder=2)
+                base_ax.add_patch(poly)
+                artists.append(poly)
+
+            t_val = (value_clipped - vmin) / (vmax - vmin)
+            angle = start_angle + t_val * (end_angle - start_angle)
+            arrow_len = r_inner * 0.9
+            arrow_dx = np.cos(angle) * arrow_len
+            arrow_dy = np.sin(angle) * arrow_len
+            arr, = base_ax.plot([0, arrow_dx], [0, arrow_dy],
+                                color='black', lw=2.5, zorder=5)
+            artists.append(arr)
+            hub = base_ax.scatter([0], [0], s=max(40, ms ** 2 * 2),
+                                   color='black', zorder=6)
+            artists.append(hub)
+
+            value_str = f"{value:.4g}"
+            v_txt = base_ax.text(0, -0.15, value_str,
+                                 ha='center', va='center',
+                                 fontsize=16, fontweight='bold')
+            artists.append(v_txt)
+            tmin = base_ax.text(-1.05, -0.1, f"{vmin:.3g}",
+                                 ha='center', va='top',
+                                 fontsize=9, color='gray')
+            tmax = base_ax.text(1.05, -0.1, f"{vmax:.3g}",
+                                 ha='center', va='top',
+                                 fontsize=9, color='gray')
+            artists.extend([tmin, tmax])
+
+            base_ax.set_xlim(-1.2, 1.2)
+            base_ax.set_ylim(-0.3, 1.15)
+            try:
+                base_ax.set_aspect('equal')
+                base_ax.axis('off')
+            except Exception:
+                pass
+
+            artist = artists[0] if artists else None
+            data['_extra_artists'] = artists[1:] if len(artists) > 1 else []
+
+        # ------------------- 3D Линия -------------------
         elif t == "3D Линия":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             artist, = base_ax.plot3D(x, y, data['z'], label=lbl, color=c,
                                      lw=lw, ls=ls, marker=marker,
                                      markersize=ms)
@@ -623,15 +5454,29 @@ class PlotsMixin:
                     artist = [artist, poly]
                 except Exception:
                     pass
+
+        # ------------------- 3D Точечная -------------------
         elif t == "3D Точечная":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
+            extra = []
             if glow:
-                base_ax.scatter3D(x, y, data['z'], color=c,
-                                  s=ms ** 2 * 6, alpha=0.10)
-                base_ax.scatter3D(x, y, data['z'], color=c,
-                                  s=ms ** 2 * 3, alpha=0.25)
+                try:
+                    g1 = base_ax.scatter3D(x, y, data['z'], color=c,
+                                            s=ms ** 2 * 6, alpha=0.10)
+                    g2 = base_ax.scatter3D(x, y, data['z'], color=c,
+                                            s=ms ** 2 * 3, alpha=0.25)
+                    extra.extend([g1, g2])
+                except Exception:
+                    pass
             artist = base_ax.scatter3D(x, y, data['z'], label=lbl,
                                        color=c, s=ms ** 2, marker=marker)
+            data['_extra_artists'] = extra
+
+        # ------------------- 3D Столбчатая -------------------
         elif t == "3D Столбчатая":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             xs = np.array(x, dtype=float)
             ys = np.array(y, dtype=float)
             zs = np.array(data['z'], dtype=float)
@@ -639,7 +5484,11 @@ class PlotsMixin:
             xs, ys, zs = xs[:n], ys[:n], zs[:n]
             artist = base_ax.bar3d(xs, ys, np.zeros_like(zs),
                                    0.8, 0.8, zs, color=c, alpha=0.85)
+
+        # ------------------- 3D Гистограмма -------------------
         elif t == "3D Гистограмма":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             xs = np.array(x, dtype=float)
             ys = np.array(y, dtype=float) if y else np.array(x, dtype=float)
             n = min(len(xs), len(ys))
@@ -654,7 +5503,11 @@ class PlotsMixin:
                                     np.zeros_like(hist.ravel()),
                                     dx, dy, hist.ravel(),
                                     color=c, alpha=0.85)
+
+        # ------------------- 3D Круговая -------------------
         elif t == "3D Круговая":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             vals = np.array(y, dtype=float)
             if vals.sum() <= 0:
                 return None
@@ -692,7 +5545,11 @@ class PlotsMixin:
             except Exception:
                 pass
             artist = group
+
+        # ------------------- 3D Поверхность / 3D Сетка -------------------
         elif t in ("3D Поверхность", "3D Сетка"):
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             Z = np.array(data.get('heatmap_data', []), dtype=float)
             if Z.size == 0:
                 zz = np.array(data.get('z', []), dtype=float)
@@ -721,7 +5578,11 @@ class PlotsMixin:
                                                      color=c, lw=lw)
             except Exception:
                 return None
+
+        # ------------------- 3D Полигон -------------------
         elif t == "3D Полигон":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             zs = data.get('z', [])
             if not x or not y or not zs:
                 return None
@@ -742,7 +5603,11 @@ class PlotsMixin:
                 artist = [poly, verts]
             except Exception:
                 return None
+
+        # ------------------- 3D Триангуляция -------------------
         elif t == "3D Триангуляция":
+            if not hasattr(base_ax, 'get_zlim'):
+                return None
             zs = data.get('z', [])
             if not x or not y or not zs:
                 return None
@@ -765,22 +5630,26 @@ class PlotsMixin:
                                                 s=ms ** 2, label=lbl)
             except Exception:
                 return None
+
+        # ------------------- Fallback -------------------
         else:
             artist, = target_ax.plot(x, y, label=lbl, color=c)
+
         return artist
 
-    # ========================================================================
-    # ДОБАВЛЕНИЕ / ОБНОВЛЕНИЕ
-    # ========================================================================
     def _add_graph(self):
         t = tr.find_type_by_display(self.type_var.get())
         self._ensure_projection(self._projection_for_type(t))
         box_data = []
         heatmap_data = []
         treemap_parents = []
+        yerr_matrix = []
+        col_labels = []
+        dst_labels = []
         x_data, y_data, z_data = [], [], []
         pie_labels, pie_colors, yerr_data = [], [], []
 
+        # --- 2D базовые и продвинутые ---
         if t in ("Полярный scatter", "3D Полигон",
                  "3D Триангуляция", "Пузырьковая"):
             x_data = self._parse_data(self.entry_x.get())
@@ -805,51 +5674,64 @@ class PlotsMixin:
                 messagebox.showerror(tr.t('msg.error'),
                                       tr.t('msg.polygon_needs_xy'))
                 return
-        elif t == "Quiver":
+
+        elif t in ("Quiver", "3D Quiver"):
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
             z_data = self._parse_data(self.entry_z.get())
             yerr_data = self._parse_data(self.entry_yerr.get())
-            if not (x_data and y_data and z_data and yerr_data):
-                messagebox.showerror(tr.t('msg.error'),
-                                      tr.t('msg.quiver_needs_4'))
-                return
-            if not (len(x_data) == len(y_data) == len(z_data)
-                    == len(yerr_data)):
-                messagebox.showerror(tr.t('msg.error'),
-                                      tr.t('msg.quiver_needs_4'))
-                return
-        elif t == "Кольцевая":
-            y_data = self._parse_data(self.entry_y.get())
-            if y_data is None:
-                messagebox.showerror(tr.t('msg.error'),
-                                      tr.t('msg.bad_format_y'))
-                return
+            if t == "Quiver":
+                if not (x_data and y_data and z_data and yerr_data):
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.quiver_needs_4'))
+                    return
+                if not (len(x_data) == len(y_data) == len(z_data)
+                        == len(yerr_data)):
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.quiver_needs_4'))
+                    return
+            else:
+                if not (x_data and y_data and z_data):
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.quiver3d_hint'))
+                    return
+                n = min(len(x_data), len(y_data), len(z_data))
+                x_data = x_data[:n]
+                y_data = y_data[:n]
+                z_data = z_data[:n]
+                if not yerr_data or len(yerr_data) < n:
+                    yerr_data = [1.0] * n
+                else:
+                    yerr_data = yerr_data[:n]
+
+        elif t in ("Кольцевая", "Вложенная круговая"):
+            if t == "Вложенная круговая":
+                box_data = []
+                for r in self.entry_y.get().split(';'):
+                    vals = self._parse_data(r)
+                    if vals:
+                        box_data.append(vals)
+                if not box_data:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.nested_needs_rings'))
+                    return
+                y_data = box_data[0]
+            else:
+                y_data = self._parse_data(self.entry_y.get())
+                if y_data is None:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.bad_format_y'))
+                    return
             x_data = list(range(len(y_data)))
             pie_labels = [l.strip()
                           for l in self.entry_pie.get().split(',')]
             pie_colors = [c.strip()
                           for c in self.entry_pie_colors.get().split(',')]
-            if len(pie_labels) != len(y_data):
+            if t == "Кольцевая" and len(pie_labels) != len(y_data):
                 messagebox.showerror(tr.t('msg.error'),
                                       tr.t('msg.pie_labels_count'))
                 return
-        elif t == "Вложенная круговая":
-            box_data = []
-            for r in self.entry_y.get().split(';'):
-                vals = self._parse_data(r)
-                if vals:
-                    box_data.append(vals)
-            if not box_data:
-                messagebox.showerror(tr.t('msg.error'),
-                                      tr.t('msg.nested_needs_rings'))
-                return
-            y_data = box_data[0]
-            x_data = list(range(len(y_data)))
-            pie_labels = [l.strip()
-                          for l in self.entry_pie.get().split(',')]
-            pie_colors = [c.strip()
-                          for c in self.entry_pie_colors.get().split(',')]
+
         elif t == "Мозаика":
             box_data = []
             for r in self.entry_y.get().split(';'):
@@ -868,6 +5750,7 @@ class PlotsMixin:
             x_data = list(range(len(y_data)))
             pie_labels = [l.strip()
                           for l in self.entry_pie.get().split(',')]
+
         elif t == "Радиальная":
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
@@ -879,6 +5762,29 @@ class PlotsMixin:
                 messagebox.showerror(tr.t('msg.error'),
                                       tr.t('msg.xy_length'))
                 return
+
+        elif t == "Полярная теплокарта":
+            x_data = self._parse_data(self.entry_x.get()) or []
+            y_data = self._parse_data(self.entry_y.get()) or []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.polarheat_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.polarheat_hint'))
+                return
+            m = len(heatmap_data)
+            n = len(heatmap_data[0])
+            if not x_data or len(x_data) != n:
+                x_data = list(range(n))
+            if not y_data or len(y_data) != m:
+                y_data = list(range(m))
+
         elif t in ("3D Поверхность", "3D Сетка"):
             x_data = self._parse_data(self.entry_x.get()) or []
             y_data = self._parse_data(self.entry_y.get()) or []
@@ -903,6 +5809,7 @@ class PlotsMixin:
                 x_data = list(range(n))
             if not y_data or len(y_data) != m:
                 y_data = list(range(m))
+
         elif t == "Столбчатая с накоплением":
             x_data = self._parse_data(self.entry_x.get())
             box_data = []
@@ -921,6 +5828,7 @@ class PlotsMixin:
                 messagebox.showerror(tr.t('msg.error'),
                                       tr.t('msg.xy_length'))
                 return
+
         elif t == "Полигон":
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
@@ -933,7 +5841,7 @@ class PlotsMixin:
                                       tr.t('msg.xy_length'))
                 return
 
-        # ------------------- [NEW] Водопад -------------------
+        # --- Финансовые и проектные ---
         elif t == "Водопад":
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
@@ -951,7 +5859,6 @@ class PlotsMixin:
                           for l in self.entry_pie.get().split(',')
                           if l.strip()]
 
-        # ------------------- [NEW] Гант -------------------
         elif t == "Гант":
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
@@ -970,6 +5877,983 @@ class PlotsMixin:
                           for c in self.entry_pie_colors.get().split(',')
                           if c.strip()]
 
+        elif t == "Свечи (OHLC)":
+            x_data = self._parse_data(self.entry_x.get()) or []
+            box_data = [self._parse_data(g) or []
+                        for g in self.entry_y.get().split(';')
+                        if g.strip()]
+            box_data = [g for g in box_data if g]
+            if len(box_data) != 4:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.candlestick_hint'))
+                return
+            if len(set(len(g) for g in box_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.candlestick_hint'))
+                return
+            y_data = box_data[0]
+            if not x_data or len(x_data) != len(y_data):
+                x_data = list(range(len(y_data)))
+
+        elif t == "Диаграмма Парето":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.bad_format_y'))
+                return
+            if self.entry_x.get().strip():
+                x_data = [s.strip()
+                          for s in self.entry_x.get().split(',')]
+            else:
+                x_data = [str(i + 1) for i in range(len(y_data))]
+            if len(x_data) != len(y_data):
+                x_data = [str(i + 1) for i in range(len(y_data))]
+
+        elif t == "Step plot":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not x_data or not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.bad_format'))
+                return
+            if len(x_data) != len(y_data):
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.xy_length'))
+                return
+
+        elif t in ("Renko", "Point-and-Figure"):
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 2:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.renko_hint' if t == "Renko"
+                         else tr.t('create.pnf_hint')))
+                return
+            x_data = list(range(len(y_data)))
+
+        # --- Статистические ---
+        elif t in ("Q-Q plot", "ECDF", "Poincaré plot"):
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 3:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.bad_format_y'))
+                return
+            x_data = list(range(len(y_data)))
+
+        elif t in ("Hexbin", "Dot plot", "Lollipop", "Sparkline",
+                   "MA plot", "Hodograph", "Роза ветров",
+                   "Диаграмма Вороного", "Выпуклая оболочка",
+                   "Alpha shape", "Constellation diagram"):
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if t in ("Dot plot", "Sparkline"):
+                if not y_data:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.bad_format_y'))
+                    return
+                if isinstance(x_data, list) and x_data:
+                    if len(x_data) == len(y_data):
+                        x_data = [str(v) for v in x_data]
+                    else:
+                        x_data = [f"C{i+1}"
+                                   for i in range(len(y_data))]
+                else:
+                    if self.entry_x.get().strip():
+                        x_data = [s.strip()
+                                   for s in
+                                   self.entry_x.get().split(',')]
+                    else:
+                        x_data = [f"C{i+1}"
+                                   for i in range(len(y_data))]
+                if len(x_data) != len(y_data):
+                    x_data = [f"C{i+1}" for i in range(len(y_data))]
+            else:
+                if not x_data or not y_data:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.bad_format'))
+                    return
+                if len(x_data) != len(y_data):
+                    if t in ("Lollipop", "Sparkline"):
+                        if not x_data:
+                            x_data = list(range(len(y_data)))
+                    else:
+                        messagebox.showerror(tr.t('msg.error'),
+                                              tr.t('msg.xy_length'))
+                        return
+
+        elif t in ("Strip plot", "Ridge plot", "Raincloud plot",
+                   "Beanplot", "Swarm plot", "Cherry blossom plot",
+                   "Dot-and-whisker"):
+            box_data = [self._parse_data(g) or []
+                        for g in self.entry_y.get().split(';')
+                        if g.strip()]
+            box_data = [g for g in box_data if g]
+            if not box_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.box_groups'))
+                return
+            y_data = box_data[0]
+            x_data = list(range(len(y_data)))
+            if self.entry_x.get().strip():
+                raw_labels = [l.strip()
+                              for l in self.entry_x.get().split(',')]
+                if len(raw_labels) == len(box_data):
+                    pie_labels = raw_labels
+
+        elif t == "Сезонная декомпозиция":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 4:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.bad_format_y'))
+                return
+            if not x_data or len(x_data) != len(y_data):
+                x_data = list(range(len(y_data)))
+
+        elif t == "Rolling statistics":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not x_data or not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.bad_format'))
+                return
+            if len(x_data) != len(y_data):
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.xy_length'))
+                return
+
+        elif t == "Recurrence plot":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 4:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.recurrence_hint'))
+                return
+            if len(y_data) > 3000:
+                messagebox.showwarning(
+                    tr.t('msg.warning'),
+                    f"Recurrence plot: {len(y_data)} точек —\n"
+                    f"матрица ~{len(y_data)**2 // 1_000_000} млн ячеек.\n"
+                    f"Используется только первые 3000 точек.")
+                y_data = y_data[:3000]
+            x_data = list(range(len(y_data)))
+
+        elif t == "Cobweb plot":
+            formula = self.entry_x.get().strip() or "r * x * (1 - x)"
+            x_data = [formula]
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.cobweb_hint'))
+                return
+            x0 = float(y_data[0])
+            N = int(y_data[1])
+            if N < 3:
+                N = 3
+            if N > 200:
+                N = 200
+            y_data = [x0, float(N)]
+
+        elif t == "Phase portrait":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 3:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.phase_hint'))
+                return
+            if not x_data or len(x_data) != len(y_data):
+                x_data = list(range(len(y_data)))
+            z_data = self.entry_z.get().strip() or ''
+
+        # --- Иерархические и сетевые ---
+        elif t in ("Arc diagram", "Hive plot", "Дерево (tree diagram)",
+                   "Radial tree 3D", "Сетевой график"):
+            z_data = [s.strip()
+                      for s in self.entry_z.get().split(';')
+                      if s.strip()]
+            if not z_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.network_hint'))
+                return
+            x_data = list(range(len(z_data)))
+            y_data = list(range(len(z_data)))
+
+        elif t == "Дендрограмма":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if len(heatmap_data) < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.dendrogram_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.dendrogram_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+            x_data = list(range(len(heatmap_data)))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Cluster dendrogram":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if len(heatmap_data) < 2:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.clusterdendro_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.clusterdendro_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+            x_data = list(range(len(heatmap_data)))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Sankey":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.sankey_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+            x_data = list(range(len(y_data)))
+
+        elif t == "Alluvial diagram":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.alluvial_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.alluvial_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+            dst_labels = [s.strip()
+                          for s in self.entry_x.get().split(';')
+                          if s.strip()]
+            if not dst_labels:
+                dst_labels = [f"D{j+1}"
+                              for j in range(len(heatmap_data[0]))]
+            x_data = list(range(len(heatmap_data)))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Chord":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.chord_hint'))
+                return
+            if len(heatmap_data) != len(heatmap_data[0]):
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.chord_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+            x_data = list(range(len(heatmap_data)))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Adjacency matrix":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.adjmatrix_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.adjmatrix_hint'))
+                return
+            n = len(heatmap_data)
+            if len(heatmap_data[0]) != n:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.adjmatrix_hint'))
+                return
+            if self.entry_pie.get().strip():
+                pie_labels = [s.strip()
+                              for s in self.entry_pie.get().split(',')
+                              if s.strip()]
+            else:
+                pie_labels = [f"N{i+1}" for i in range(n)]
+            if len(pie_labels) != n:
+                pie_labels = [f"N{i+1}" for i in range(n)]
+            x_data = list(range(n))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Circle packing":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.circlepack_hint'))
+                return
+            if self.entry_x.get().strip():
+                x_data = [s.strip()
+                          for s in self.entry_x.get().split(',')
+                          if s.strip()]
+            else:
+                x_data = [f"C{i+1}" for i in range(len(y_data))]
+            if len(x_data) != len(y_data):
+                x_data = [f"C{i+1}" for i in range(len(y_data))]
+            z_data = self._parse_data(self.entry_z.get())
+            if not z_data or len(z_data) != len(y_data):
+                z_data = [-1.0] * len(y_data)
+
+        elif t == "Mapper algorithm":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.mapper_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.mapper_hint'))
+                return
+            if len(heatmap_data) < 3:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.mapper_hint'))
+                return
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = list(range(len(heatmap_data)))
+
+        # --- Векторные поля ---
+        elif t in ("Stream plot", "Streamlines"):
+            x_data = self._parse_data(self.entry_x.get()) or []
+            y_data = self._parse_data(self.entry_y.get()) or []
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            yerr_matrix = []
+            for r in self.entry_yerr.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    yerr_matrix.append(vals)
+            if not heatmap_data or not yerr_matrix:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.stream_hint'
+                         if t == "Stream plot"
+                         else tr.t('create.streamlines_hint')))
+                return
+            if (len(set(len(r) for r in heatmap_data)) != 1
+                    or len(set(len(r) for r in yerr_matrix)) != 1):
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.stream_hint'
+                         if t == "Stream plot"
+                         else tr.t('create.streamlines_hint')))
+                return
+            if (len(heatmap_data), len(heatmap_data[0])) != \
+               (len(yerr_matrix), len(yerr_matrix[0])):
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.stream_hint'
+                         if t == "Stream plot"
+                         else tr.t('create.streamlines_hint')))
+                return
+            m = len(heatmap_data)
+            n = len(heatmap_data[0])
+            if not x_data or len(x_data) != n:
+                x_data = list(range(n))
+            if not y_data or len(y_data) != m:
+                y_data = list(range(m))
+
+        # --- Радиотехника ---
+        elif t in ("Bode plot", "Nyquist plot", "Root locus",
+                   "Smith chart"):
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if t == "Bode plot":
+                if not x_data or not y_data:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.bode_hint'))
+                    return
+                if len(x_data) != len(y_data):
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('msg.xy_length'))
+                    return
+                if z_data and len(z_data) >= len(x_data):
+                    z_data = z_data[:len(x_data)]
+                else:
+                    z_data = []
+            elif t == "Nyquist plot":
+                if not x_data or not y_data or not z_data:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.nyquist_hint'))
+                    return
+                n = min(len(x_data), len(y_data), len(z_data))
+                if n < 2:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.nyquist_hint'))
+                    return
+                x_data = x_data[:n]
+                y_data = y_data[:n]
+                z_data = z_data[:n]
+            elif t == "Root locus":
+                if not x_data or not y_data:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.rootlocus_hint'))
+                    return
+                if len(y_data) < 2:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.rootlocus_hint'))
+                    return
+            elif t == "Smith chart":
+                z_matrix = []
+                for r in self.entry_z.get().split(';'):
+                    vals = self._parse_data(r)
+                    if vals:
+                        z_matrix.append(vals)
+                if (len(z_matrix) >= 2
+                        and len(z_matrix[0]) == len(z_matrix[1])
+                        and len(z_matrix[0]) > 0):
+                    x_data = z_matrix[0]
+                    y_data = z_matrix[1]
+                    heatmap_data = z_matrix
+                elif x_data and y_data and len(x_data) == len(y_data):
+                    heatmap_data = []
+                else:
+                    messagebox.showerror(tr.t('msg.error'),
+                                          tr.t('create.smith_hint'))
+                    return
+
+        # --- 3D-расширенные ---
+        elif t == "Ribbon plot 3D":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if not x_data or not y_data or not z_data:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('msg.need_xyz_lengths', type=tr.type_name(t)))
+                return
+            n = min(len(x_data), len(y_data), len(z_data))
+            if n < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.ribbon3d_hint'))
+                return
+            x_data = x_data[:n]
+            y_data = y_data[:n]
+            z_data = z_data[:n]
+
+        elif t == "Waterfall spectrogram 3D":
+            x_data = self._parse_data(self.entry_x.get()) or []
+            y_data = self._parse_data(self.entry_y.get()) or []
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.waterfall_spectrogram3d_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.waterfall_spectrogram3d_hint'))
+                return
+            m = len(heatmap_data)
+            n = len(heatmap_data[0])
+            if not x_data or len(x_data) != n:
+                x_data = list(range(n))
+            if not y_data or len(y_data) != m:
+                y_data = list(range(m))
+
+        elif t == "Riemann surface 3D":
+            formula = self.entry_z.get().strip() or "sqrt(z)"
+            x_data = self._parse_data(self.entry_x.get()) or []
+            y_data = self._parse_data(self.entry_y.get()) or []
+            x_data = [float(v) for v in x_data[:2]]
+            y_data = [float(v) for v in y_data[:2]]
+            z_data = formula
+
+        elif t == "Joyplot 3D":
+            box_data = [self._parse_data(g) or []
+                        for g in self.entry_y.get().split(';')
+                        if g.strip()]
+            box_data = [g for g in box_data if g]
+            if not box_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.joyplot3d_hint'))
+                return
+            y_data = box_data[0]
+            x_data = list(range(len(y_data)))
+            if self.entry_x.get().strip():
+                raw_labels = [l.strip()
+                              for l in self.entry_x.get().split(',')]
+                if len(raw_labels) == len(box_data):
+                    pie_labels = raw_labels
+
+        elif t == "Isosurface 3D":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.isosurface3d_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.isosurface3d_hint'))
+                return
+            if len(heatmap_data) < 3 or len(heatmap_data[0]) < 3:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.isosurface3d_hint'))
+                return
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = list(range(len(heatmap_data)))
+
+        # --- Гео / метео / научные ---
+        elif t == "Choropleth":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.choropleth_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.choropleth_hint'))
+                return
+            if self.entry_pie.get().strip():
+                pie_labels = [s.strip()
+                              for s in self.entry_pie.get().split(',')
+                              if s.strip()]
+            else:
+                pie_labels = []
+            x_raw = self.entry_x.get().strip()
+            if x_raw:
+                col_labels = [s.strip()
+                              for s in x_raw.split(';')
+                              if s.strip()]
+            else:
+                col_labels = []
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Flow map":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not x_data or not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.flowmap_hint'))
+                return
+            if len(x_data) != len(y_data):
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.xy_length'))
+                return
+            if self.entry_pie.get().strip():
+                pie_labels = [s.strip()
+                              for s in self.entry_pie.get().split(',')
+                              if s.strip()]
+            else:
+                pie_labels = [f"N{i+1}" for i in range(len(x_data))]
+            if len(pie_labels) != len(x_data):
+                pie_labels = [f"N{i+1}" for i in range(len(x_data))]
+            z_data = [s.strip()
+                      for s in self.entry_z.get().split(';')
+                      if s.strip()]
+            if not z_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.flowmap_hint'))
+                return
+
+        elif t == "Isopleth":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.isopleth_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.isopleth_hint'))
+                return
+            if len(heatmap_data) < 2 or len(heatmap_data[0]) < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.isopleth_hint'))
+                return
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Cartogram":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.cartogram_hint'))
+                return
+            if self.entry_x.get().strip():
+                x_data = [s.strip()
+                          for s in self.entry_x.get().split(',')
+                          if s.strip()]
+            else:
+                x_data = [f"R{i+1}" for i in range(len(y_data))]
+            if len(x_data) != len(y_data):
+                x_data = [f"R{i+1}" for i in range(len(y_data))]
+
+        elif t == "Dot density map":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.dotdensity_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.dotdensity_hint'))
+                return
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t in ("Skew-T log-P", "Thermodynamic diagram"):
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if not x_data or not y_data or not z_data:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.skewt_hint'
+                         if t == "Skew-T log-P"
+                         else tr.t('create.thermo_hint')))
+                return
+            n = min(len(x_data), len(y_data), len(z_data))
+            if n < 2:
+                messagebox.showerror(
+                    tr.t('msg.error'),
+                    tr.t('create.skewt_hint'
+                         if t == "Skew-T log-P"
+                         else tr.t('create.thermo_hint')))
+                return
+            x_data = x_data[:n]
+            y_data = y_data[:n]
+            z_data = z_data[:n]
+
+        # --- ML / статистика-2 ---
+        elif t == "Volcano plot":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not x_data or not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.volcano_hint'))
+                return
+            if len(x_data) != len(y_data):
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('msg.xy_length'))
+                return
+            z_data = self._parse_data(self.entry_z.get()) or []
+
+        elif t == "ROC curve":
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if not y_data or not z_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.roc_hint'))
+                return
+            if len(y_data) != len(z_data):
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.roc_hint'))
+                return
+            if len(y_data) < 4:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.roc_hint'))
+                return
+            x_data = list(range(len(y_data)))
+
+        elif t == "Manhattan plot":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            if not x_data or not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.manhattan_hint'))
+                return
+            n = min(len(x_data), len(y_data))
+            x_data = x_data[:n]
+            y_data = y_data[:n]
+            z_data = self._parse_data(self.entry_z.get()) or []
+            if z_data and len(z_data) >= n:
+                z_data = z_data[:n]
+            else:
+                z_data = [1.0] * n
+
+        # --- Сравнение / ранги ---
+        elif t == "Bump chart":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if not heatmap_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.bump_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.bump_hint'))
+                return
+            n_time = len(heatmap_data[0])
+            x_parsed = self._parse_data(self.entry_x.get())
+            if x_parsed and len(x_parsed) == n_time:
+                col_labels = [str(v) for v in x_parsed]
+            elif self.entry_x.get().strip():
+                col_labels = [s.strip()
+                              for s in self.entry_x.get().split(',')
+                              if s.strip()]
+            else:
+                col_labels = [f"T{i+1}" for i in range(n_time)]
+            if len(col_labels) != n_time:
+                col_labels = [f"T{i+1}" for i in range(n_time)]
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+            x_data = list(range(n_time))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Slopegraph":
+            x_raw = self.entry_x.get().strip()
+            if x_raw:
+                x_data = [s.strip()
+                          for s in x_raw.split(',')
+                          if s.strip()]
+            else:
+                x_data = ["До", "После"]
+            if len(x_data) < 2:
+                x_data = x_data + ["?"] * (2 - len(x_data))
+            x_data = x_data[:2]
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if not y_data or not z_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.slope_hint'))
+                return
+            n = min(len(y_data), len(z_data))
+            y_data = y_data[:n]
+            z_data = z_data[:n]
+            pie_labels = [l.strip()
+                          for l in self.entry_pie.get().split(',')
+                          if l.strip()]
+
+        elif t == "Dumbbell plot":
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if not y_data or not z_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.dumbbell_hint'))
+                return
+            n = min(len(y_data), len(z_data))
+            y_data = y_data[:n]
+            z_data = z_data[:n]
+            if self.entry_x.get().strip():
+                x_data = [s.strip()
+                          for s in self.entry_x.get().split(',')
+                          if s.strip()]
+            else:
+                x_data = [f"C{i+1}" for i in range(n)]
+            if len(x_data) != n:
+                x_data = [f"C{i+1}" for i in range(n)]
+
+        elif t == "Bar of pie":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 3:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.barofpie_hint'))
+                return
+            if self.entry_x.get().strip():
+                x_data = [s.strip()
+                          for s in self.entry_x.get().split(',')
+                          if s.strip()]
+            else:
+                x_data = [f"C{i+1}" for i in range(len(y_data))]
+            if len(x_data) != len(y_data):
+                x_data = [f"C{i+1}" for i in range(len(y_data))]
+            pie_colors = [c.strip()
+                          for c in
+                          self.entry_pie_colors.get().split(',')
+                          if c.strip()]
+
+        elif t == "Ribbon plot 2D":
+            x_data = self._parse_data(self.entry_x.get())
+            y_data = self._parse_data(self.entry_y.get())
+            z_data = self._parse_data(self.entry_z.get())
+            if not x_data or not y_data or not z_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.ribbon2d_hint'))
+                return
+            n = min(len(x_data), len(y_data), len(z_data))
+            if n < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.ribbon2d_hint'))
+                return
+            x_data = x_data[:n]
+            y_data = y_data[:n]
+            z_data = z_data[:n]
+
+        elif t == "Bullet chart":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.bullet_hint'))
+                return
+            y_data = y_data[:3]
+            if self.entry_x.get().strip():
+                x_data = [s.strip()
+                          for s in self.entry_x.get().split(',')
+                          if s.strip()]
+                x_data = x_data[:1]
+            else:
+                x_data = [self.entry_label.get() or 'KPI']
+
+        elif t == "Funnel chart":
+            x_raw = self.entry_x.get().strip()
+            if x_raw:
+                x_data = [s.strip()
+                          for s in x_raw.split(',')
+                          if s.strip()]
+            else:
+                x_data = []
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.funnel_hint'))
+                return
+            if len(x_data) != len(y_data):
+                x_data = [f"Этап {i+1}" for i in range(len(y_data))]
+            pie_colors = [c.strip()
+                          for c in
+                          self.entry_pie_colors.get().split(',')
+                          if c.strip()]
+
+        elif t == "Календарная теплокарта":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.calheat_hint'))
+                return
+            x_data = self._parse_data(self.entry_x.get()) or []
+
+        elif t == "Диаграмма бифуркаций":
+            x_data = self._parse_data(self.entry_x.get()) or []
+            y_data = self._parse_data(self.entry_y.get()) or []
+            if not x_data:
+                x_data = [2.5, 4.0]
+            if not y_data:
+                y_data = [0.5]
+            x_data = [float(v) for v in x_data[:2]]
+            y_data = [float(v) for v in y_data[:1]]
+            if x_data[0] < 0:
+                x_data[0] = 0.1
+            if len(x_data) == 2 and x_data[1] <= x_data[0]:
+                x_data[1] = x_data[0] + 1.0
+            if y_data[0] <= 0 or y_data[0] >= 1:
+                y_data[0] = 0.5
+
+        elif t == "Parallel coordinates":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if len(heatmap_data) < 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.parallel_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.parallel_hint'))
+                return
+            if len(heatmap_data[0]) < 2:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.parallel_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_x.get().split(',')
+                          if l.strip()]
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Radar chart":
+            heatmap_data = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    heatmap_data.append(vals)
+            if len(heatmap_data) < 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.radar_hint'))
+                return
+            if len(set(len(r) for r in heatmap_data)) != 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.radar_hint'))
+                return
+            if len(heatmap_data[0]) < 3:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.radar_hint'))
+                return
+            pie_labels = [l.strip()
+                          for l in self.entry_x.get().split(',')
+                          if l.strip()]
+            x_data = list(range(len(heatmap_data[0])))
+            y_data = heatmap_data[0] if heatmap_data else []
+
+        elif t == "Спидометр":
+            y_data = self._parse_data(self.entry_y.get())
+            if not y_data or len(y_data) < 1:
+                messagebox.showerror(tr.t('msg.error'),
+                                      tr.t('create.gauge_hint'))
+                return
+            y_data = y_data[:1]
+            x_data = self._parse_data(self.entry_x.get()) or []
+            x_data = x_data[:2]
+            if len(x_data) == 0:
+                x_data = [0.0, 100.0]
+            elif len(x_data) == 1:
+                x_data = [0.0, x_data[0]]
+
+        # --- Старые группы (Box, Violin, Heatmap, Treemap) ---
         elif t in ("Box plot", "Violin"):
             box_data = [self._parse_data(g) or []
                         for g in self.entry_y.get().split(';')
@@ -985,6 +6869,7 @@ class PlotsMixin:
                               for l in self.entry_x.get().split(',')]
                 if len(raw_labels) == len(box_data):
                     pie_labels = raw_labels
+
         elif t in ("Heatmap", "Contour", "Imshow"):
             for row_text in self.entry_z.get().split(';'):
                 vals = self._parse_data(row_text)
@@ -994,6 +6879,7 @@ class PlotsMixin:
                 messagebox.showerror(tr.t('msg.error'),
                                       tr.t('msg.heatmap_matrix'))
                 return
+
         elif t in ("Treemap", "Sunburst"):
             y_data = self._parse_data(self.entry_y.get())
             if y_data is None:
@@ -1007,6 +6893,8 @@ class PlotsMixin:
                                self.treemap_parents.get().split(';')]
             while len(treemap_parents) < len(y_data):
                 treemap_parents.append('')
+
+        # --- Обычные типы (Линия, Точечная, 3D и пр.) ---
         else:
             y_data = self._parse_data(self.entry_y.get())
             if y_data is None:
@@ -1059,6 +6947,9 @@ class PlotsMixin:
                                       tr.t('msg.pie_labels_count'))
                 return
 
+        # ================================================================
+        # Создание объекта
+        # ================================================================
         self._snapshot(tr.t('hist.added_graph',
                             name=self.entry_label.get() or t))
         self.line_counter += 1
@@ -1081,6 +6972,18 @@ class PlotsMixin:
             unit_y=self.unit_y_var.get(),
             unit_z=self.unit_z_var.get(),
         )
+        # Доп. поля для новых типов
+        if t == "Choropleth":
+            d['col_labels'] = col_labels
+        if t == "Flow map":
+            d['z'] = z_data
+        if t == "Bump chart":
+            d['col_labels'] = col_labels
+        if t == "Bar of pie":
+            d['pie_colors'] = pie_colors
+        if yerr_matrix:
+            d['yerr_matrix'] = yerr_matrix
+
         d['artist'] = self._create_artist(d)
         self.graphs_data.append(d)
         self._update_listbox()
@@ -1095,127 +6998,181 @@ class PlotsMixin:
         self.type_var.set(tr.type_name(data['type']))
         self._on_type_change()
 
-        if data['type'] not in ("Круговая", "Гистограмма",
-                                 "Heatmap", "Contour", "Imshow",
-                                 "Кольцевая", "Вложенная круговая",
-                                 "Мозаика", "Полярный scatter",
-                                 "3D Полигон", "3D Триангуляция",
-                                 "Пузырьковая"):
+        # --- Универсальная подстановка X ---
+        skip_x = ("Круговая", "Гистограмма", "Heatmap", "Contour",
+                  "Imshow", "Кольцевая", "Вложенная круговая",
+                  "Мозаика", "Полярный scatter", "3D Полигон",
+                  "3D Триангуляция", "Пузырьковая", "Q-Q plot",
+                  "ECDF", "Strip plot", "Ridge plot", "Дендрограмма",
+                  "Cluster dendrogram", "Sankey", "Chord",
+                  "Сетевой график", "Hive plot", "Arc diagram",
+                  "Дерево (tree diagram)", "Radial tree 3D",
+                  "Adjacency matrix", "Mapper algorithm",
+                  "Recurrence plot", "Poincaré plot",
+                  "Isosurface 3D", "Choropleth", "Isopleth",
+                  "Dot density map", "Parallel coordinates",
+                  "Radar chart", "Spectral waterfall (2D)",
+                  "Календарная теплокарта", "Полярная теплокарта",
+                  "Диаграмма Вороного", "Выпуклая оболочка",
+                  "Alpha shape", "Constellation diagram",
+                  "Bar of pie", "Ribbon plot 2D", "Bullet chart")
+        if data['type'] not in skip_x:
             self.entry_x.delete(0, tk.END)
             self.entry_x.insert(0, ", ".join(map(str, data['x'])))
         elif data['type'] == "Гистограмма":
             self.entry_x.delete(0, tk.END)
             self.entry_x.insert(0, ", ".join(map(str, data['x'])))
 
-        self.entry_y.delete(0, tk.END)
-        self.entry_y.insert(0, ", ".join(map(str, data['y'])))
-
-        if "3D" in data['type']:
-            self.entry_z.delete(0, tk.END)
-            self.entry_z.insert(0, ", ".join(map(str, data['z'])))
-        if data['type'] == "Круговая":
-            self.entry_pie.delete(0, tk.END)
-            self.entry_pie.insert(0, ", ".join(data['pie_labels']))
-            self.entry_pie_colors.delete(0, tk.END)
-            self.entry_pie_colors.insert(
-                0, ", ".join(data.get('pie_colors', [])))
-        if data['type'] in ("Кольцевая", "Вложенная круговая"):
-            self.entry_pie.delete(0, tk.END)
-            self.entry_pie.insert(0, ", ".join(data.get('pie_labels', [])))
-            self.entry_pie_colors.delete(0, tk.END)
-            self.entry_pie_colors.insert(
-                0, ", ".join(data.get('pie_colors', [])))
-            if data['type'] == "Вложенная круговая":
-                self.entry_y.delete(0, tk.END)
-                self.entry_y.insert(0, " ; ".join(
-                    ", ".join(map(str, r))
-                    for r in data.get('box_data', [])))
-        if data['type'] == "Мозаика":
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(0, " ; ".join(
-                ", ".join(map(str, r))
-                for r in data.get('box_data', [])))
-            self.entry_pie.delete(0, tk.END)
-            self.entry_pie.insert(0, ", ".join(data.get('pie_labels', [])))
-
-        # ------------------- [NEW] Водопад / Гант -------------------
-        if data['type'] in ("Водопад", "Гант"):
-            self.entry_pie.delete(0, tk.END)
-            self.entry_pie.insert(0, ", ".join(data.get('pie_labels', [])))
-            if data['type'] == "Гант":
-                self.entry_pie_colors.delete(0, tk.END)
-                self.entry_pie_colors.insert(
-                    0, ", ".join(data.get('pie_colors', [])))
-
-        if data['type'] == "Quiver":
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, data['x'])))
+        # --- Универсальная подстановка Y ---
+        skip_y = ("Heatmap", "Contour", "Imshow", "Дендрограмма",
+                  "Cluster dendrogram", "Chord", "Сетевой график",
+                  "Hive plot", "Arc diagram",
+                  "Дерево (tree diagram)", "Radial tree 3D",
+                  "Adjacency matrix", "Mapper algorithm",
+                  "Isosurface 3D", "Choropleth", "Isopleth",
+                  "Dot density map", "Parallel coordinates",
+                  "Radar chart", "Spectral waterfall (2D)",
+                  "Полярная теплокарта", "Диаграмма Вороного",
+                  "Выпуклая оболочка", "Alpha shape",
+                  "Funnel chart", "Ribbon plot 2D", "Bullet chart",
+                  "Сетевой график")
+        if data['type'] not in skip_y:
             self.entry_y.delete(0, tk.END)
             self.entry_y.insert(0, ", ".join(map(str, data['y'])))
+
+        # --- Z (по семействам) ---
+        if data['type'] in ("Quiver", "3D Quiver"):
             self.entry_z.delete(0, tk.END)
             self.entry_z.insert(0, ", ".join(map(str, data.get('z', []))))
             self.entry_yerr.delete(0, tk.END)
             self.entry_yerr.insert(
                 0, ", ".join(map(str, data.get('yerr', []))))
-        if data['type'] == "Радиальная":
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, data['x'])))
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(0, ", ".join(map(str, data['y'])))
-        if data['type'] == "Полярный scatter":
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, data['x'])))
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(0, ", ".join(map(str, data['y'])))
-        if data['type'] in ("3D Полигон", "3D Триангуляция",
-                            "Пузырьковая"):
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, data['x'])))
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(0, ", ".join(map(str, data['y'])))
+        elif data['type'] == "Bode plot":
             self.entry_z.delete(0, tk.END)
             self.entry_z.insert(0, ", ".join(map(str, data.get('z', []))))
-        if data['type'] in ("3D Поверхность", "3D Сетка"):
+        elif data['type'] in ("Сетевой график", "Hive plot", "Arc diagram",
+                              "Дерево (tree diagram)", "Radial tree 3D"):
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, " ; ".join(data.get('z', [])))
+        elif data['type'] in ("Дендрограмма", "Cluster dendrogram",
+                              "Chord", "Smith chart", "Stream plot",
+                              "Streamlines", "Adjacency matrix",
+                              "Mapper algorithm", "Isosurface 3D",
+                              "Choropleth", "Isopleth", "Dot density map",
+                              "Полярная теплокарта", "Parallel coordinates",
+                              "Radar chart", "Bump chart"):
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, " ; ".join(
+                ", ".join(map(str, r))
+                for r in data.get('heatmap_data', [])))
+            if data['type'] in ("Stream plot", "Streamlines"):
+                self.entry_yerr.delete(0, tk.END)
+                self.entry_yerr.insert(0, " ; ".join(
+                    ", ".join(map(str, r))
+                    for r in data.get('yerr_matrix', [])))
+        elif data['type'] in ("Heatmap", "Contour", "Imshow",
+                              "3D Поверхность", "3D Сетка"):
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, " ; ".join(
+                ", ".join(map(str, r))
+                for r in data.get('heatmap_data', [])))
+        elif data['type'] in ("3D Линия", "3D Точечная", "3D Столбчатая",
+                              "3D Гистограмма", "3D Круговая",
+                              "3D Полигон", "3D Триангуляция",
+                              "Ribbon plot 3D", "Ripple plot 3D",
+                              "Waterfall spectrogram 3D", "Nyquist plot"):
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, ", ".join(map(str, data.get('z', []))))
+        elif data['type'] == "Riemann surface 3D":
+            self.entry_z.delete(0, tk.END)
+            z_val = data.get('z', 'sqrt(z)')
+            if isinstance(z_val, str):
+                self.entry_z.insert(0, z_val)
+            elif isinstance(z_val, list) and z_val:
+                self.entry_z.insert(0, str(z_val[0]))
+            else:
+                self.entry_z.insert(0, 'sqrt(z)')
+        elif data['type'] == "Cobweb plot":
             self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, data['x'])))
+            formula = data['x'][0] if data.get('x') else "r * x * (1 - x)"
+            if isinstance(formula, str):
+                self.entry_x.insert(0, formula)
+            else:
+                self.entry_x.insert(0, "r * x * (1 - x)")
             self.entry_y.delete(0, tk.END)
             self.entry_y.insert(0, ", ".join(map(str, data['y'])))
+        elif data['type'] == "Phase portrait":
             self.entry_z.delete(0, tk.END)
-            self.entry_z.insert(0, " ; ".join(
-                ", ".join(map(str, r))
-                for r in data.get('heatmap_data', [])))
-        if data['type'] == "Столбчатая с накоплением":
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, data['x'])))
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(0, " ; ".join(
-                ", ".join(map(str, s))
-                for s in data.get('box_data', [])))
-        if data['type'] in ("Box plot", "Violin"):
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(0, " ; ".join(
-                ", ".join(map(str, g))
-                for g in data.get('box_data', [])))
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(
-                data.get('pie_labels', []) or []))
-        if data['type'] in ("Heatmap", "Contour", "Imshow"):
+            z_val = data.get('z', '')
+            if isinstance(z_val, str):
+                self.entry_z.insert(0, z_val)
+        elif data['type'] in ("Skew-T log-P", "Thermodynamic diagram"):
             self.entry_z.delete(0, tk.END)
-            self.entry_z.insert(0, " ; ".join(
-                ", ".join(map(str, r))
-                for r in data.get('heatmap_data', [])))
-        if data['type'] in ("Treemap", "Sunburst"):
+            self.entry_z.insert(0, ", ".join(map(str, data.get('z', []))))
+
+        # --- Подписи / цвета ---
+        if data['type'] in ("Круговая", "Кольцевая", "Вложенная круговая",
+                            "Водопад", "Гант", "Диаграмма Парето",
+                            "Sankey", "Дендрограмма", "Cluster dendrogram",
+                            "Chord", "Strip plot", "Ridge plot",
+                            "Свечи (OHLC)", "Raincloud plot", "Beanplot",
+                            "Swarm plot", "Cherry blossom plot",
+                            "Dot-and-whisker", "Alluvial diagram",
+                            "Flow map", "Choropleth",
+                            "Adjacency matrix"):
             self.entry_pie.delete(0, tk.END)
             self.entry_pie.insert(0, ", ".join(data.get('pie_labels', [])))
+        if data['type'] in ("Круговая", "Кольцевая", "Вложенная круговая",
+                            "Гант"):
+            self.entry_pie_colors.delete(0, tk.END)
+            self.entry_pie_colors.insert(
+                0, ", ".join(data.get('pie_colors', [])))
+
+        # --- Box-данные ---
+        if data['type'] in ("Вложенная круговая", "Мозаика",
+                            "Столбчатая с накоплением", "Box plot",
+                            "Violin", "Свечи (OHLC)", "Strip plot",
+                            "Ridge plot", "Raincloud plot", "Beanplot",
+                            "Swarm plot", "Cherry blossom plot",
+                            "Dot-and-whisker", "Joyplot 3D"):
+            self.entry_y.delete(0, tk.END)
+            self.entry_y.insert(0, " ; ".join(
+                ", ".join(map(str, r))
+                for r in data.get('box_data', [])))
+            if data['type'] in ("Strip plot", "Ridge plot",
+                                "Raincloud plot", "Beanplot",
+                                "Swarm plot", "Cherry blossom plot",
+                                "Dot-and-whisker"):
+                self.entry_x.delete(0, tk.END)
+                self.entry_x.insert(0, ", ".join(
+                    data.get('pie_labels', []) or []))
+
+        # --- Treemap ---
+        if data['type'] in ("Treemap", "Sunburst"):
             self.treemap_parents.delete(0, tk.END)
             self.treemap_parents.insert(
                 0, " ; ".join(data.get('treemap_parents', [])))
 
-        if data['type'] not in ("Quiver",):
+        # --- Специальные: col_labels / dst_labels ---
+        if data['type'] in ("Bump chart", "Choropleth"):
+            self.entry_x.delete(0, tk.END)
+            sep = ", " if data['type'] == "Bump chart" else " ; "
+            self.entry_x.insert(0, sep.join(data.get('col_labels', [])))
+        if data['type'] == "Alluvial diagram":
+            self.entry_x.delete(0, tk.END)
+            self.entry_x.insert(0, " ; ".join(
+                data.get('dst_labels', [])))
+
+        # --- yerr (для типов, где нет yerr-матрицы) ---
+        if data['type'] not in ("Quiver", "3D Quiver", "Stream plot",
+                                "Streamlines"):
             self.entry_yerr.delete(0, tk.END)
-            if data.get('yerr'):
+            yerr_val = data.get('yerr', [])
+            if yerr_val and not isinstance(yerr_val[0], list):
                 self.entry_yerr.insert(
-                    0, ", ".join(map(str, data['yerr'])))
+                    0, ", ".join(map(str, yerr_val)))
+
+        # --- Мета ---
         self.use_y2_var.set(data.get('use_y2', False))
         self.bins_var.set(data.get('bins', 10))
         self.fill_var.set(data.get('fill', False))
@@ -1245,18 +7202,19 @@ class PlotsMixin:
         self._stop_animation()
         idx = sel[0]
         data = self.graphs_data[idx]
-        self._remove_artist(data['artist'])
+        self._destroy_object(data)
         t = tr.find_type_by_display(self.type_var.get())
         self._ensure_projection(self._projection_for_type(t))
         self._snapshot(tr.t('hist.changed_graph', name=data['label']))
 
+        # --- Разбор данных по семействам ---
         if t in ("Полярный scatter", "3D Полигон",
                  "3D Триангуляция", "Пузырьковая"):
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
             if t in ("3D Полигон", "3D Триангуляция", "Пузырьковая"):
                 data['z'] = self._parse_data(self.entry_z.get()) or []
-        elif t == "Quiver":
+        elif t in ("Quiver", "3D Quiver"):
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
             data['z'] = self._parse_data(self.entry_z.get()) or []
@@ -1291,8 +7249,6 @@ class PlotsMixin:
             data['pie_labels'] = [l.strip()
                                    for l in
                                    self.entry_pie.get().split(',')]
-
-        # ------------------- [NEW] Водопад / Гант -------------------
         elif t == "Водопад":
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
@@ -1313,7 +7269,6 @@ class PlotsMixin:
                                    for c in
                                    self.entry_pie_colors.get().split(',')
                                    if c.strip()]
-
         elif t == "Радиальная":
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
@@ -1350,6 +7305,597 @@ class PlotsMixin:
         elif t == "Полигон":
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
+        # --- Финансовые ---
+        elif t == "Свечи (OHLC)":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            box_data = [self._parse_data(g) or []
+                        for g in self.entry_y.get().split(';')
+                        if g.strip()]
+            box_data = [g for g in box_data if g]
+            data['box_data'] = box_data
+            data['y'] = box_data[0] if box_data else []
+            if not data['x'] or len(data['x']) != len(data['y']):
+                data['x'] = list(range(len(data['y'])))
+        elif t == "Диаграмма Парето":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if self.entry_x.get().strip():
+                x_new = [s.strip()
+                         for s in self.entry_x.get().split(',')]
+                if len(x_new) == len(data['y']):
+                    data['x'] = x_new
+            if len(data.get('x', [])) != len(data['y']):
+                data['x'] = [str(i + 1) for i in range(len(data['y']))]
+        elif t == "Step plot":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+        elif t in ("Renko", "Point-and-Figure"):
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['x'] = list(range(len(data['y'])))
+        # --- Статистические ---
+        elif t in ("Q-Q plot", "ECDF", "Poincaré plot"):
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['x'] = list(range(len(data['y'])))
+        elif t in ("Hexbin", "Dot plot", "Lollipop", "Sparkline",
+                   "MA plot", "Hodograph", "Роза ветров",
+                   "Диаграмма Вороного", "Выпуклая оболочка",
+                   "Alpha shape", "Constellation diagram"):
+            if t in ("Dot plot", "Sparkline"):
+                data['y'] = self._parse_data(self.entry_y.get()) or []
+                if self.entry_x.get().strip():
+                    x_new = [s.strip()
+                             for s in self.entry_x.get().split(',')
+                             if s.strip()]
+                    if len(x_new) == len(data['y']):
+                        data['x'] = x_new
+                    else:
+                        data['x'] = [f"C{i+1}"
+                                      for i in range(len(data['y']))]
+                else:
+                    data['x'] = [f"C{i+1}"
+                                  for i in range(len(data['y']))]
+            else:
+                data['x'] = self._parse_data(self.entry_x.get()) or []
+                data['y'] = self._parse_data(self.entry_y.get()) or []
+            if t == "Constellation diagram":
+                data['z'] = self._parse_data(self.entry_z.get()) or []
+        elif t in ("Strip plot", "Ridge plot", "Raincloud plot",
+                   "Beanplot", "Swarm plot", "Cherry blossom plot",
+                   "Dot-and-whisker"):
+            box_data = [self._parse_data(g) or []
+                        for g in self.entry_y.get().split(';')
+                        if g.strip()]
+            box_data = [g for g in box_data if g]
+            data['box_data'] = box_data
+            data['y'] = box_data[0] if box_data else []
+            data['x'] = list(range(len(data['y'])))
+            if self.entry_x.get().strip():
+                raw_labels = [l.strip()
+                              for l in self.entry_x.get().split(',')]
+                if len(raw_labels) == len(box_data):
+                    data['pie_labels'] = raw_labels
+                else:
+                    data['pie_labels'] = []
+        elif t == "Сезонная декомпозиция":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if not data['x'] or len(data['x']) != len(data['y']):
+                data['x'] = list(range(len(data['y'])))
+        elif t == "Rolling statistics":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+        elif t == "Recurrence plot":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if len(data['y']) > 3000:
+                data['y'] = data['y'][:3000]
+            data['x'] = list(range(len(data['y'])))
+        elif t == "Cobweb plot":
+            formula = self.entry_x.get().strip() or "r * x * (1 - x)"
+            data['x'] = [formula]
+            y_new = self._parse_data(self.entry_y.get()) or []
+            if len(y_new) >= 2:
+                x0 = float(y_new[0])
+                N = int(y_new[1])
+                if N < 3:
+                    N = 3
+                if N > 200:
+                    N = 200
+                data['y'] = [x0, float(N)]
+        elif t == "Phase portrait":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if not data['x'] or len(data['x']) != len(data['y']):
+                data['x'] = list(range(len(data['y'])))
+            data['z'] = self.entry_z.get().strip()
+        # --- Сетевые ---
+        elif t in ("Arc diagram", "Hive plot", "Дерево (tree diagram)",
+                   "Radial tree 3D", "Сетевой график"):
+            z_new = [s.strip()
+                     for s in self.entry_z.get().split(';')
+                     if s.strip()]
+            data['z'] = z_new
+            data['x'] = list(range(len(z_new)))
+            data['y'] = list(range(len(z_new)))
+        elif t == "Дендрограмма":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+            data['x'] = list(range(len(hm)))
+            data['y'] = hm[0] if hm else []
+        elif t == "Cluster dendrogram":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+            data['x'] = list(range(len(hm)))
+            data['y'] = hm[0] if hm else []
+        elif t == "Sankey":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['x'] = list(range(len(data['y'])))
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+        elif t == "Alluvial diagram":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+            data['dst_labels'] = [s.strip()
+                                   for s in
+                                   self.entry_x.get().split(';')
+                                   if s.strip()]
+            if not data['dst_labels'] and hm:
+                data['dst_labels'] = [f"D{j+1}"
+                                       for j in range(len(hm[0]))]
+            data['x'] = list(range(len(hm)))
+            data['y'] = hm[0] if hm else []
+        elif t == "Chord":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+            data['x'] = list(range(len(hm)))
+            data['y'] = hm[0] if hm else []
+        elif t == "Adjacency matrix":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            n = len(hm) if hm else 0
+            if self.entry_pie.get().strip():
+                pie_labels = [s.strip()
+                              for s in self.entry_pie.get().split(',')
+                              if s.strip()]
+            else:
+                pie_labels = [f"N{i+1}" for i in range(n)]
+            if len(pie_labels) != n:
+                pie_labels = [f"N{i+1}" for i in range(n)]
+            data['pie_labels'] = pie_labels
+            data['x'] = list(range(n))
+            data['y'] = hm[0] if hm else []
+        elif t == "Circle packing":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if self.entry_x.get().strip():
+                x_new = [s.strip()
+                         for s in self.entry_x.get().split(',')
+                         if s.strip()]
+                if len(x_new) != len(data['y']):
+                    x_new = [f"C{i+1}"
+                              for i in range(len(data['y']))]
+            else:
+                x_new = [f"C{i+1}" for i in range(len(data['y']))]
+            data['x'] = x_new
+            z_new = self._parse_data(self.entry_z.get())
+            if not z_new or len(z_new) != len(data['y']):
+                z_new = [-1.0] * len(data['y'])
+            data['z'] = z_new
+        elif t == "Mapper algorithm":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = list(range(len(hm)))
+        # --- Векторные поля ---
+        elif t in ("Stream plot", "Streamlines"):
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            vm = []
+            for r in self.entry_yerr.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    vm.append(vals)
+            m = len(hm)
+            n = len(hm[0]) if hm else 0
+            if not x_new or len(x_new) != n:
+                x_new = list(range(n))
+            if not y_new or len(y_new) != m:
+                y_new = list(range(m))
+            data['x'] = x_new
+            data['y'] = y_new
+            data['heatmap_data'] = hm
+            data['yerr_matrix'] = vm
+        # --- Радиотехника ---
+        elif t == "Bode plot":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['z'] = self._parse_data(self.entry_z.get()) or []
+        elif t == "Nyquist plot":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_new = self._parse_data(self.entry_z.get()) or []
+            n = min(len(x_new), len(y_new), len(z_new))
+            data['x'] = x_new[:n]
+            data['y'] = y_new[:n]
+            data['z'] = z_new[:n]
+        elif t == "Root locus":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+        elif t == "Smith chart":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_matrix = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    z_matrix.append(vals)
+            if len(z_matrix) >= 2 and len(z_matrix[0]) == len(z_matrix[1]):
+                data['x'] = z_matrix[0]
+                data['y'] = z_matrix[1]
+                data['heatmap_data'] = z_matrix
+            elif x_new and y_new and len(x_new) == len(y_new):
+                data['x'] = x_new
+                data['y'] = y_new
+                data['heatmap_data'] = []
+        # --- 3D-расширенные ---
+        elif t == "Ribbon plot 3D":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_new = self._parse_data(self.entry_z.get()) or []
+            n = min(len(x_new), len(y_new), len(z_new))
+            data['x'] = x_new[:n]
+            data['y'] = y_new[:n]
+            data['z'] = z_new[:n]
+        elif t == "Waterfall spectrogram 3D":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            m = len(hm)
+            n = len(hm[0]) if hm else 0
+            if not x_new or len(x_new) != n:
+                x_new = list(range(n))
+            if not y_new or len(y_new) != m:
+                y_new = list(range(m))
+            data['x'] = x_new
+            data['y'] = y_new
+            data['heatmap_data'] = hm
+        elif t == "Riemann surface 3D":
+            data['x'] = (self._parse_data(self.entry_x.get()) or [])[:2]
+            data['y'] = (self._parse_data(self.entry_y.get()) or [])[:2]
+            data['z'] = self.entry_z.get().strip() or "sqrt(z)"
+        elif t == "Joyplot 3D":
+            box_data = [self._parse_data(g) or []
+                        for g in self.entry_y.get().split(';')
+                        if g.strip()]
+            box_data = [g for g in box_data if g]
+            data['box_data'] = box_data
+            data['y'] = box_data[0] if box_data else []
+            data['x'] = list(range(len(data['y'])))
+            if self.entry_x.get().strip():
+                raw_labels = [l.strip()
+                              for l in self.entry_x.get().split(',')]
+                if len(raw_labels) == len(box_data):
+                    data['pie_labels'] = raw_labels
+                else:
+                    data['pie_labels'] = []
+        elif t == "Isosurface 3D":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = list(range(len(hm)))
+        # --- Гео / метео ---
+        elif t == "Choropleth":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            if self.entry_pie.get().strip():
+                data['pie_labels'] = [s.strip()
+                                       for s in
+                                       self.entry_pie.get().split(',')
+                                       if s.strip()]
+            else:
+                data['pie_labels'] = []
+            x_raw = self.entry_x.get().strip()
+            if x_raw:
+                data['col_labels'] = [s.strip()
+                                       for s in x_raw.split(';')
+                                       if s.strip()]
+            else:
+                data['col_labels'] = []
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = hm[0] if hm else []
+        elif t == "Flow map":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            n = min(len(x_new), len(y_new))
+            data['x'] = x_new[:n]
+            data['y'] = y_new[:n]
+            if self.entry_pie.get().strip():
+                labels = [s.strip()
+                          for s in self.entry_pie.get().split(',')
+                          if s.strip()]
+            else:
+                labels = [f"N{i+1}" for i in range(n)]
+            if len(labels) != n:
+                labels = [f"N{i+1}" for i in range(n)]
+            data['pie_labels'] = labels
+            data['z'] = [s.strip()
+                          for s in self.entry_z.get().split(';')
+                          if s.strip()]
+        elif t == "Isopleth":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = hm[0] if hm else []
+        elif t == "Cartogram":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if self.entry_x.get().strip():
+                x_new = [s.strip()
+                         for s in self.entry_x.get().split(',')
+                         if s.strip()]
+                if len(x_new) != len(data['y']):
+                    x_new = [f"R{i+1}"
+                              for i in range(len(data['y']))]
+            else:
+                x_new = [f"R{i+1}" for i in range(len(data['y']))]
+            data['x'] = x_new
+        elif t == "Dot density map":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = hm[0] if hm else []
+        elif t in ("Skew-T log-P", "Thermodynamic diagram"):
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_new = self._parse_data(self.entry_z.get()) or []
+            n = min(len(x_new), len(y_new), len(z_new))
+            data['x'] = x_new[:n]
+            data['y'] = y_new[:n]
+            data['z'] = z_new[:n]
+        # --- ML ---
+        elif t == "Volcano plot":
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['z'] = self._parse_data(self.entry_z.get()) or []
+        elif t == "ROC curve":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['z'] = self._parse_data(self.entry_z.get()) or []
+            data['x'] = list(range(len(data['y'])))
+        elif t == "Manhattan plot":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            n = min(len(x_new), len(y_new))
+            data['x'] = x_new[:n]
+            data['y'] = y_new[:n]
+            z_new = self._parse_data(self.entry_z.get()) or []
+            if z_new and len(z_new) >= n:
+                data['z'] = z_new[:n]
+            else:
+                data['z'] = [1.0] * n
+        # --- Сравнение / ранги ---
+        elif t == "Bump chart":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            n_time = len(hm[0]) if hm else 0
+            x_parsed = self._parse_data(self.entry_x.get())
+            if x_parsed and len(x_parsed) == n_time:
+                col_labels = [str(v) for v in x_parsed]
+            elif self.entry_x.get().strip():
+                col_labels = [s.strip()
+                              for s in self.entry_x.get().split(',')
+                              if s.strip()]
+            else:
+                col_labels = [f"T{i+1}" for i in range(n_time)]
+            if len(col_labels) != n_time:
+                col_labels = [f"T{i+1}" for i in range(n_time)]
+            data['col_labels'] = col_labels
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+            data['x'] = list(range(n_time))
+            data['y'] = hm[0] if hm else []
+        elif t == "Slopegraph":
+            x_raw = self.entry_x.get().strip()
+            if x_raw:
+                x_new = [s.strip()
+                         for s in x_raw.split(',')
+                         if s.strip()]
+            else:
+                x_new = ["До", "После"]
+            if len(x_new) < 2:
+                x_new = x_new + ["?"] * (2 - len(x_new))
+            data['x'] = x_new[:2]
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_new = self._parse_data(self.entry_z.get()) or []
+            n = min(len(y_new), len(z_new))
+            data['y'] = y_new[:n]
+            data['z'] = z_new[:n]
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_pie.get().split(',')
+                                   if l.strip()]
+        elif t == "Dumbbell plot":
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_new = self._parse_data(self.entry_z.get()) or []
+            n = min(len(y_new), len(z_new))
+            data['y'] = y_new[:n]
+            data['z'] = z_new[:n]
+            if self.entry_x.get().strip():
+                x_new = [s.strip()
+                         for s in self.entry_x.get().split(',')
+                         if s.strip()]
+                if len(x_new) != n:
+                    x_new = [f"C{i+1}" for i in range(n)]
+            else:
+                x_new = [f"C{i+1}" for i in range(n)]
+            data['x'] = x_new
+        elif t == "Bar of pie":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            if self.entry_x.get().strip():
+                x_new = [s.strip()
+                         for s in self.entry_x.get().split(',')
+                         if s.strip()]
+                if len(x_new) != len(data['y']):
+                    x_new = [f"C{i+1}"
+                              for i in range(len(data['y']))]
+            else:
+                x_new = [f"C{i+1}" for i in range(len(data['y']))]
+            data['x'] = x_new
+            data['pie_colors'] = [c.strip()
+                                   for c in
+                                   self.entry_pie_colors.get().split(',')
+                                   if c.strip()]
+        elif t == "Ribbon plot 2D":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            z_new = self._parse_data(self.entry_z.get()) or []
+            n = min(len(x_new), len(y_new), len(z_new))
+            data['x'] = x_new[:n]
+            data['y'] = y_new[:n]
+            data['z'] = z_new[:n]
+        elif t == "Bullet chart":
+            y_new = self._parse_data(self.entry_y.get()) or []
+            data['y'] = y_new[:3]
+            if self.entry_x.get().strip():
+                x_new = [s.strip()
+                         for s in self.entry_x.get().split(',')
+                         if s.strip()]
+                data['x'] = x_new[:1]
+            else:
+                data['x'] = [self.entry_label.get() or 'KPI']
+        elif t == "Funnel chart":
+            x_raw = self.entry_x.get().strip()
+            if x_raw:
+                x_new = [s.strip()
+                         for s in x_raw.split(',')
+                         if s.strip()]
+            else:
+                x_new = []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            if len(x_new) != len(y_new):
+                x_new = [f"Этап {i+1}" for i in range(len(y_new))]
+            data['x'] = x_new
+            data['y'] = y_new
+            data['pie_colors'] = [c.strip()
+                                   for c in
+                                   self.entry_pie_colors.get().split(',')
+                                   if c.strip()]
+        elif t == "Календарная теплокарта":
+            data['y'] = self._parse_data(self.entry_y.get()) or []
+            data['x'] = self._parse_data(self.entry_x.get()) or []
+        elif t == "Диаграмма бифуркаций":
+            x_new = self._parse_data(self.entry_x.get()) or []
+            y_new = self._parse_data(self.entry_y.get()) or []
+            if not x_new:
+                x_new = [2.5, 4.0]
+            if not y_new:
+                y_new = [0.5]
+            data['x'] = [float(v) for v in x_new[:2]]
+            data['y'] = [float(v) for v in y_new[:1]]
+        elif t == "Parallel coordinates":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_x.get().split(',')
+                                   if l.strip()]
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = hm[0] if hm else []
+        elif t == "Radar chart":
+            hm = []
+            for r in self.entry_z.get().split(';'):
+                vals = self._parse_data(r)
+                if vals:
+                    hm.append(vals)
+            data['heatmap_data'] = hm
+            data['pie_labels'] = [l.strip()
+                                   for l in
+                                   self.entry_x.get().split(',')
+                                   if l.strip()]
+            data['x'] = list(range(len(hm[0]) if hm else 0))
+            data['y'] = hm[0] if hm else []
+        elif t == "Спидометр":
+            y_new = self._parse_data(self.entry_y.get()) or []
+            data['y'] = y_new[:1]
+            x_new = (self._parse_data(self.entry_x.get()) or [])[:2]
+            if len(x_new) == 0:
+                x_new = [0.0, 100.0]
+            elif len(x_new) == 1:
+                x_new = [0.0, x_new[0]]
+            data['x'] = x_new
+        # --- Box / Violin / Heatmap / Treemap ---
         elif t in ("Box plot", "Violin"):
             box_data = [self._parse_data(g) or []
                         for g in self.entry_y.get().split(';')
@@ -1379,6 +7925,7 @@ class PlotsMixin:
             data['treemap_parents'] = [p.strip()
                                         for p in
                                         self.treemap_parents.get().split(';')]
+        # --- Обычные (Линия, Точечная, 3D и пр.) ---
         else:
             no_yerr = ("Круговая", "3D Линия", "3D Точечная",
                        "3D Столбчатая", "3D Гистограмма",
@@ -1404,6 +7951,7 @@ class PlotsMixin:
                 if "3D" in t:
                     data['z'] = self._parse_data(self.entry_z.get())
 
+        # --- Мета-обновления ---
         data.update({
             'type': t, 'color': self.color_var.get(),
             'label': self.entry_label.get(),
@@ -1429,7 +7977,7 @@ class PlotsMixin:
         self._snapshot(tr.t('hist.deleted_graphs', count=len(sel)))
         for idx in sorted(sel, reverse=True):
             if 0 <= idx < len(self.graphs_data):
-                self._remove_artist(self.graphs_data.pop(idx)['artist'])
+                self._destroy_object(self.graphs_data.pop(idx))
         for k in list(self.axes_secondary.keys()):
             if not any(d.get('use_y2')
                        and d.get('subplot_index', 0) == k
@@ -1469,6 +8017,7 @@ class PlotsMixin:
         self._style_axes()
         self._init_tooltip()
         self._init_crosshair()
+        self._apply_grid_to_axes(self.axes)
         self.graphs_data.clear()
         self.folders = [""]
         self.line_counter = 0
@@ -1479,16 +8028,25 @@ class PlotsMixin:
     def _update_listbox(self):
         tree = self.graph_tree
         tree.delete(*tree.get_children())
+        q = ''
+        if hasattr(self, 'search_var'):
+            try:
+                q = self.search_var.get().strip().lower()
+            except Exception:
+                q = ''
+
         folder_nodes = {}
-        for f in self.folders:
-            if not f:
-                continue
-            is_hidden = f in self.hidden_folders
-            icon = "📂" if is_hidden else "📁"
-            folder_nodes[f] = tree.insert('', 'end',
-                                           text=f"{icon} {f}",
-                                           open=(not is_hidden),
-                                           values=())
+        if not q:
+            for f in self.folders:
+                if not f:
+                    continue
+                is_hidden = f in self.hidden_folders
+                icon = "📂" if is_hidden else "📁"
+                folder_nodes[f] = tree.insert('', 'end',
+                                              text=f"{icon} {f}",
+                                              open=(not is_hidden),
+                                              values=())
+
         for i, d in enumerate(self.graphs_data):
             tags = []
             if d.get('use_y2'):
@@ -1498,14 +8056,27 @@ class PlotsMixin:
             if d.get('notes'):
                 tags.append("💬")
             tag_str = f" [{','.join(tags)}]" if tags else ""
-            text = f"[{tr.type_name(d['type'])}]{tag_str} {d['label']}"
-            folder = d.get('folder', '')
-            if folder and folder in self.hidden_folders:
-                continue
-            parent = folder_nodes.get(folder, '')
-            tree.insert(parent, 'end', text=text, values=(i,))
+            type_disp = tr.type_name(d['type'])
+            text = f"[{type_disp}]{tag_str} {d['label']}"
+
+            if q:
+                haystack = (str(d.get('label', '')) + ' ' +
+                            type_disp + ' ' +
+                            str(d.get('notes', '')) + ' ' +
+                            str(d.get('folder', ''))).lower()
+                if q not in haystack:
+                    continue
+                tree.insert('', 'end', text=text, values=(i,))
+            else:
+                folder = d.get('folder', '')
+                if folder and folder in self.hidden_folders:
+                    continue
+                parent = folder_nodes.get(folder, '')
+                tree.insert(parent, 'end', text=text, values=(i,))
 
     def _redraw(self):
+        import time
+        t0 = time.perf_counter()
         try:
             if self.lim_auto_var.get():
                 for ax in self.axes:
@@ -1528,14 +8099,21 @@ class PlotsMixin:
                         ax.legend_.remove()
                 except Exception:
                     pass
-                try:
-                    ax.grid(self.show_grid_var.get(),
-                            linestyle='--', alpha=0.6)
-                except Exception:
-                    pass
+            self._apply_grid_to_axes(self.axes)
         except Exception:
             pass
         self.canvas.draw_idle()
+
+        if hasattr(self, 'perf_var'):
+            try:
+                dt = (time.perf_counter() - t0) * 1000
+                n_pts = sum(len(d.get('x') or [])
+                            for d in self.graphs_data)
+                self.perf_var.set(
+                    f'⏱ {dt:.0f} ms · {n_pts} pts · '
+                    f'{len(self.graphs_data)} obj')
+            except Exception:
+                pass
 
     def _redraw_all(self):
         if hasattr(self, 'fig'):
@@ -1554,6 +8132,7 @@ class PlotsMixin:
         t = tr.find_type_by_display(self.type_var.get())
         self.hint_label.config(text="")
 
+        # --- 2D базовые и продвинутые ---
         if t in ("Круговая", "Кольцевая"):
             self.frame_y.pack(fill=tk.X)
             self.frame_pie_labels.pack(fill=tk.X)
@@ -1619,7 +8198,7 @@ class PlotsMixin:
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
 
-        # ------------------- [NEW] Водопад / Гант -------------------
+        # --- Финансовые и проектные ---
         elif t == "Водопад":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -1633,7 +8212,441 @@ class PlotsMixin:
             self.frame_pie_colors.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.gantt_hint'))
             self.frame_hint.pack(fill=tk.X)
+        elif t == "Свечи (OHLC)":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.candlestick_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Диаграмма Парето":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.pareto_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Step plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.step_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Renko":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.renko_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Point-and-Figure":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.pnf_hint'))
+            self.frame_hint.pack(fill=tk.X)
 
+        # --- Статистические ---
+        elif t == "Q-Q plot":
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.qq_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "ECDF":
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(
+                text="Y: выборка для эмпирической функции распределения")
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Hexbin":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.hexbin_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t in ("Strip plot", "Ridge plot", "Raincloud plot",
+                   "Beanplot", "Swarm plot", "Cherry blossom plot",
+                   "Dot-and-whisker"):
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            hint_key = {
+                "Strip plot": 'create.strip_hint',
+                "Ridge plot": 'create.ridge_hint',
+                "Raincloud plot": 'create.raincloud_hint',
+                "Beanplot": 'create.beanplot_hint',
+                "Swarm plot": 'create.swarm_hint',
+                "Cherry blossom plot": 'create.cherry_hint',
+                "Dot-and-whisker": 'create.dotwhisker_hint',
+            }.get(t, 'create.box_hint')
+            self.hint_label.config(text=tr.t(hint_key))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Сезонная декомпозиция":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.seasonal_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Rolling statistics":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.rolling_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Recurrence plot":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.recurrence_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Cobweb plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.cobweb_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Poincaré plot":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.poincare_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Phase portrait":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.phase_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- Сетевые ---
+        elif t == "Arc diagram":
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.arc_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Hive plot":
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.hive_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Дерево (tree diagram)":
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.tree_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Radial tree 3D":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.radialtree3d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Сетевой график":
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.network_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Дендрограмма":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.dendrogram_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Cluster dendrogram":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.clusterdendro_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Sankey":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.sankey_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Alluvial diagram":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.alluvial_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Chord":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.chord_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Adjacency matrix":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.adjmatrix_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Circle packing":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.circlepack_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Mapper algorithm":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.mapper_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- Векторные поля ---
+        elif t in ("Stream plot", "Streamlines"):
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_yerr.pack(fill=tk.X)
+            if t == "Streamlines":
+                self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(
+                text=tr.t('create.stream_hint'
+                          if t == "Stream plot"
+                          else 'create.streamlines_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- Радиотехника ---
+        elif t == "Bode plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.bode_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Smith chart":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.smith_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Nyquist plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.nyquist_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Root locus":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.rootlocus_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Constellation diagram":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.constellation_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- 3D-расширенные ---
+        elif t == "Ribbon plot 3D":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.ribbon3d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Waterfall spectrogram 3D":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_fill.pack(fill=tk.X)
+            self.hint_label.config(
+                text=tr.t('create.waterfall_spectrogram3d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Riemann surface 3D":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.riemann3d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Joyplot 3D":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.joyplot3d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Isosurface 3D":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.isosurface3d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- Гео / метео ---
+        elif t == "Choropleth":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.choropleth_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Flow map":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.flowmap_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Isopleth":
+            self.frame_z.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.isopleth_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Cartogram":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.cartogram_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Dot density map":
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.dotdensity_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Hodograph":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.hodograph_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Роза ветров":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.windrose_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Skew-T log-P":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.skewt_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Thermodynamic diagram":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.thermo_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Диаграмма Вороного":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.voronoi_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Выпуклая оболочка":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.convexhull_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Alpha shape":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.alphashape_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- ML ---
+        elif t == "Volcano plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.volcano_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "ROC curve":
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.roc_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Manhattan plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.manhattan_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "MA plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_fill.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.maplot_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- Сравнение / ранги ---
+        elif t == "Dot plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.dotplot_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Lollipop":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.lollipop_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Пирамида":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.pyramid_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Sparkline":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.sparkline_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Cycle plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.cycle_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Bump chart":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.bump_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Slopegraph":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.frame_pie_labels.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.slope_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Dumbbell plot":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.dumbbell_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Bar of pie":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_pie_colors.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.barofpie_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Ribbon plot 2D":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.ribbon2d_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Bullet chart":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.bullet_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Funnel chart":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_pie_colors.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.funnel_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Календарная теплокарта":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.calheat_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Полярная теплокарта":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.polarheat_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Диаграмма бифуркаций":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.bifurcation_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Parallel coordinates":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.parallel_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Radar chart":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_z.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.radar_hint'))
+            self.frame_hint.pack(fill=tk.X)
+        elif t == "Спидометр":
+            self.frame_x.pack(fill=tk.X)
+            self.frame_y.pack(fill=tk.X)
+            self.frame_bins.pack(fill=tk.X)
+            self.hint_label.config(text=tr.t('create.gauge_hint'))
+            self.frame_hint.pack(fill=tk.X)
+
+        # --- Box / Violin / Heatmap / Treemap ---
         elif t in ("Box plot", "Violin"):
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -1677,13 +8690,23 @@ class PlotsMixin:
     # СЕТКА / ЛЕГЕНДА / ОСИ
     # ========================================================================
     def _update_grid(self):
-        for ax in self.axes:
+        state = self.show_grid_var.get()
+        docs = getattr(self, 'documents', None)
+        if not docs:
+            self._apply_grid_to_axes(self.axes, state)
             try:
-                ax.grid(self.show_grid_var.get(),
-                        linestyle='--', alpha=0.6)
+                self.canvas.draw_idle()
             except Exception:
                 pass
-        self.canvas.draw_idle()
+            return
+        for doc in docs:
+            self._apply_grid_to_axes(getattr(doc, 'axes', []), state)
+            cv = getattr(doc, 'canvas', None)
+            if cv is not None:
+                try:
+                    cv.draw_idle()
+                except Exception:
+                    pass
 
     def _update_legend(self):
         for i, ax in enumerate(self.axes):
@@ -1794,12 +8817,15 @@ class PlotsMixin:
             'label': label or f"Object {self.line_counter}",
             'lw': lw, 'ls': ls, 'ms': ms, 'marker': marker,
             'yerr': [], 'use_y2': False, 'bins': 10,
-            'box_data': [], 'heatmap_data': [],
+            'box_data': [], 'heatmap_data': [], 'yerr_matrix': [],
             'folder': '', 'smooth': False, 'fill': False,
             'glow': False, 'notes': '', 'treemap_parents': [],
+            'col_labels': [], 'dst_labels': [],
             'subplot_index': 0,
             'unit_x': '—', 'unit_y': '—', 'unit_z': '—',
             'artist': None,
+            '_extra_artists': [],
+            '_cleanup': None,
         }
         d.update(kw)
         return d
@@ -1840,14 +8866,44 @@ class PlotsMixin:
                                     tr.t('msg.select_object'))
             return
         data = self.graphs_data[selection[0]]
-        invalid = ("Круговая", "Гистограмма", "Heatmap", "Contour",
-                   "Imshow", "Box plot", "Violin", "Treemap",
-                   "Sunburst", "Полигон", "Quiver", "Кольцевая",
-                   "Вложенная круговая", "Мозаика", "Радиальная",
-                   "Столбчатая с накоплением", "Полярный scatter",
-                   "Пузырьковая", "3D Поверхность", "3D Сетка",
-                   "3D Полигон", "3D Триангуляция",
-                   "Водопад", "Гант")            # [NEW]
+        invalid = (
+            "Круговая", "Гистограмма", "Heatmap", "Contour",
+            "Imshow", "Box plot", "Violin", "Treemap",
+            "Sunburst", "Полигон", "Quiver", "Кольцевая",
+            "Вложенная круговая", "Мозаика", "Радиальная",
+            "Столбчатая с накоплением", "Полярный scatter",
+            "Пузырьковая", "3D Поверхность", "3D Сетка",
+            "3D Полигон", "3D Триангуляция",
+            "Водопад", "Гант", "Renko", "Point-and-Figure",
+            "Q-Q plot", "Ridge plot", "Strip plot",
+            "Raincloud plot", "Beanplot", "Swarm plot",
+            "Cherry blossom plot", "Dot-and-whisker",
+            "Свечи (OHLC)", "Диаграмма Парето",
+            "Дендрограмма", "Cluster dendrogram",
+            "Sankey", "Alluvial diagram", "Chord",
+            "Сетевой график", "Hive plot", "Arc diagram",
+            "Дерево (tree diagram)", "Radial tree 3D",
+            "Circle packing", "Adjacency matrix", "Mapper algorithm",
+            "Hexbin", "Stream plot", "Streamlines", "3D Quiver",
+            "Bode plot", "Smith chart", "Nyquist plot",
+            "Root locus", "Constellation diagram",
+            "Ribbon plot 3D", "Waterfall spectrogram 3D",
+            "Riemann surface 3D", "Joyplot 3D", "Isosurface 3D",
+            "Choropleth", "Flow map", "Isopleth", "Cartogram",
+            "Dot density map", "Hodograph", "Роза ветров",
+            "Skew-T log-P", "Thermodynamic diagram",
+            "Диаграмма Вороного", "Выпуклая оболочка", "Alpha shape",
+            "Volcano plot", "ROC curve", "Manhattan plot",
+            "MA plot", "Recurrence plot", "Cobweb plot",
+            "Poincaré plot", "Phase portrait",
+            "Dot plot", "Lollipop", "Пирамида", "Sparkline",
+            "Cycle plot", "Bump chart", "Slopegraph",
+            "Dumbbell plot", "Bar of pie", "Ribbon plot 2D",
+            "Bullet chart", "Funnel chart",
+            "Календарная теплокарта", "Полярная теплокарта",
+            "Диаграмма бифуркаций", "Parallel coordinates",
+            "Radar chart", "Спидометр",
+        )
         if "3D" in data['type'] or data['type'] in invalid:
             messagebox.showerror(tr.t('msg.error'),
                                   tr.t('msg.trend_only_2d'))
@@ -1890,12 +8946,13 @@ class PlotsMixin:
     # ========================================================================
     def _snapshot(self, description=""):
         try:
-            self._mark_modified()                       # [NEW]
+            self._mark_modified()
         except Exception:
             pass
         if description:
             self._show_history(description)
-        snap = [{k: v for k, v in d.items() if k != 'artist'}
+        snap = [{k: v for k, v in d.items()
+                 if k not in ('artist', '_extra_artists', '_cleanup')}
                 for d in self.graphs_data]
         self.undo_stack.append(snap)
         if len(self.undo_stack) > self.max_undo:
@@ -1906,7 +8963,8 @@ class PlotsMixin:
         if not self.undo_stack:
             self.status_var.set(tr.t('status.nothing_undo'))
             return
-        current = [{k: v for k, v in d.items() if k != 'artist'}
+        current = [{k: v for k, v in d.items()
+                   if k not in ('artist', '_extra_artists', '_cleanup')}
                    for d in self.graphs_data]
         self.redo_stack.append(current)
         self._restore_snapshot(self.undo_stack.pop())
@@ -1917,7 +8975,8 @@ class PlotsMixin:
         if not self.redo_stack:
             self.status_var.set(tr.t('status.nothing_redo'))
             return
-        current = [{k: v for k, v in d.items() if k != 'artist'}
+        current = [{k: v for k, v in d.items()
+                   if k not in ('artist', '_extra_artists', '_cleanup')}
                    for d in self.graphs_data]
         self.undo_stack.append(current)
         self._restore_snapshot(self.redo_stack.pop())
@@ -1934,7 +8993,9 @@ class PlotsMixin:
         self.axes_secondary = {}
         self.fig.clear()
         needs_3d = any("3D" in d['type'] for d in snap)
-        needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter")
+        needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter",
+                                         "Полярная теплокарта",
+                                         "Роза ветров")
                           for d in snap)
         proj_kw = {}
         if needs_3d:
@@ -1951,17 +9012,21 @@ class PlotsMixin:
         self._style_axes()
         self._init_tooltip()
         self._init_crosshair()
+        self._apply_grid_to_axes(self.axes)
         self.graphs_data = []
         self.folders = [""]
         for d in snap:
             d = dict(d)
             for k, v in [('folder', ''), ('box_data', []),
-                         ('heatmap_data', []), ('smooth', False),
+                         ('heatmap_data', []), ('yerr_matrix', []),
+                         ('smooth', False),
                          ('fill', False), ('glow', False),
                          ('notes', ''), ('treemap_parents', []),
+                         ('col_labels', []), ('dst_labels', []),
                          ('subplot_index', 0),
                          ('unit_x', '—'), ('unit_y', '—'),
-                         ('unit_z', '—')]:
+                         ('unit_z', '—'),
+                         ('_extra_artists', []), ('_cleanup', None)]:
                 d.setdefault(k, v)
             if d['folder'] and d['folder'] not in self.folders:
                 self.folders.append(d['folder'])
@@ -2014,7 +9079,10 @@ class PlotsMixin:
         elif low.endswith('.graphxanim'):
             self._load_graphxanim(path)
         elif low.endswith('.graphxtemp'):
-            self._load_autosave(path)                       # [NEW]
+            try:
+                self._load_autosave(path)
+            except Exception:
+                pass
 
     # ========================================================================
     # ГРУППОВЫЕ ОПЕРАЦИИ
@@ -2029,7 +9097,7 @@ class PlotsMixin:
         self._snapshot(tr.t('hist.group_color', count=len(sel)))
         for idx in sel:
             self.graphs_data[idx]['color'] = c[1]
-            self._remove_artist(self.graphs_data[idx]['artist'])
+            self._destroy_object(self.graphs_data[idx])
             self.graphs_data[idx]['artist'] = self._create_artist(
                 self.graphs_data[idx])
         self._update_listbox()
@@ -2047,7 +9115,7 @@ class PlotsMixin:
         self._snapshot(tr.t('hist.group_lw', count=len(sel)))
         for idx in sel:
             self.graphs_data[idx]['lw'] = val
-            self._remove_artist(self.graphs_data[idx]['artist'])
+            self._destroy_object(self.graphs_data[idx])
             self.graphs_data[idx]['artist'] = self._create_artist(
                 self.graphs_data[idx])
         self._update_listbox()
@@ -2065,7 +9133,7 @@ class PlotsMixin:
         self._snapshot(tr.t('hist.group_ms', count=len(sel)))
         for idx in sel:
             self.graphs_data[idx]['ms'] = val
-            self._remove_artist(self.graphs_data[idx]['artist'])
+            self._destroy_object(self.graphs_data[idx])
             self.graphs_data[idx]['artist'] = self._create_artist(
                 self.graphs_data[idx])
         self._update_listbox()
@@ -2076,7 +9144,8 @@ class PlotsMixin:
         if not sel:
             return
         items = [{k: v for k, v in self.graphs_data[i].items()
-                  if k != 'artist'} for i in sel]
+                  if k not in ('artist', '_extra_artists', '_cleanup')}
+                 for i in sel]
         path = filedialog.asksaveasfilename(
             defaultextension=".json",
             filetypes=[("JSON", "*.json")],
@@ -2104,16 +9173,22 @@ class PlotsMixin:
         new_list = []
         for idx in sel:
             src = self.graphs_data[idx]
-            new = dict(src)
+            new = {k: v for k, v in src.items()
+                   if k not in ('artist', '_extra_artists', '_cleanup')}
             for key in ('x', 'y', 'z', 'pie_labels', 'pie_colors',
-                        'yerr', 'treemap_parents'):
+                        'yerr', 'treemap_parents', 'col_labels',
+                        'dst_labels'):
                 if key in src:
                     new[key] = list(src[key])
             new['box_data'] = [list(g) for g in src.get('box_data', [])]
             new['heatmap_data'] = [list(r)
                                     for r in src.get('heatmap_data', [])]
+            new['yerr_matrix'] = [list(r)
+                                   for r in src.get('yerr_matrix', [])]
             new['label'] = src['label'] + " (copy)"
             new['artist'] = None
+            new['_extra_artists'] = []
+            new['_cleanup'] = None
             new['artist'] = self._create_artist(new)
             new_list.append(new)
         self.graphs_data.extend(new_list)
@@ -2218,7 +9293,7 @@ class PlotsMixin:
             keep = []
             for d in self.graphs_data:
                 if d.get('folder') == name:
-                    self._remove_artist(d['artist'])
+                    self._destroy_object(d)
                 else:
                     keep.append(d)
             self.graphs_data = keep
@@ -2470,7 +9545,35 @@ class PlotsMixin:
         if "3D" in data['type'] or data['type'] in (
                 "Круговая", "Гистограмма", "Heatmap", "Contour",
                 "Imshow", "Box plot", "Violin", "Treemap", "Sunburst",
-                "Водопад", "Гант"):                         # [NEW]
+                "Водопад", "Гант", "Renko", "Point-and-Figure",
+                "Q-Q plot", "Ridge plot", "Strip plot",
+                "Raincloud plot", "Beanplot", "Swarm plot",
+                "Cherry blossom plot", "Dot-and-whisker",
+                "Свечи (OHLC)", "Диаграмма Парето",
+                "Дендрограмма", "Cluster dendrogram",
+                "Sankey", "Alluvial diagram", "Chord",
+                "Сетевой график", "Hive plot", "Arc diagram",
+                "Дерево (tree diagram)", "Radial tree 3D",
+                "Circle packing", "Adjacency matrix",
+                "Mapper algorithm", "Hexbin", "Stream plot",
+                "Streamlines", "3D Quiver", "Bode plot", "Smith chart",
+                "Nyquist plot", "Root locus", "Constellation diagram",
+                "Ribbon plot 3D", "Waterfall spectrogram 3D",
+                "Riemann surface 3D", "Joyplot 3D", "Isosurface 3D",
+                "Choropleth", "Flow map", "Isopleth", "Cartogram",
+                "Dot density map", "Hodograph", "Роза ветров",
+                "Skew-T log-P", "Thermodynamic diagram",
+                "Диаграмма Вороного", "Выпуклая оболочка",
+                "Alpha shape", "Volcano plot", "ROC curve",
+                "Manhattan plot", "MA plot", "Recurrence plot",
+                "Cobweb plot", "Poincaré plot", "Phase portrait",
+                "Dot plot", "Lollipop", "Пирамида", "Sparkline",
+                "Cycle plot", "Bump chart", "Slopegraph",
+                "Dumbbell plot", "Bar of pie", "Ribbon plot 2D",
+                "Bullet chart", "Funnel chart",
+                "Календарная теплокарта", "Полярная теплокарта",
+                "Диаграмма бифуркаций", "Parallel coordinates",
+                "Radar chart", "Спидометр"):
             messagebox.showerror(tr.t('msg.error'),
                                   tr.t('msg.trend_only_2d'))
             return
@@ -2678,7 +9781,7 @@ class PlotsMixin:
         data['x'][pt_idx] = event.xdata
         data['y'][pt_idx] = event.ydata
         self._drag_count_in_session += 1
-        self._remove_artist(data['artist'])
+        self._destroy_object(data)
         data['artist'] = self._create_artist(data)
         self.canvas.draw_idle()
 
@@ -2735,6 +9838,43 @@ class PlotsMixin:
             arrowprops=dict(arrowstyle="->"))
         self.tooltip_annot.set_visible(False)
 
+    _TOOLTIP_SKIP = (
+        "Круговая", "Heatmap", "Contour", "Imshow",
+        "Box plot", "Violin", "Treemap", "Sunburst",
+        "Мозаика", "Радиальная", "Столбчатая с накоплением",
+        "Вложенная круговая", "Полигон", "Кольцевая",
+        "Полярный scatter", "Пузырьковая", "Quiver",
+        "Водопад", "Гант", "Renko", "Point-and-Figure",
+        "Q-Q plot", "Ridge plot", "Strip plot",
+        "Raincloud plot", "Beanplot", "Swarm plot",
+        "Cherry blossom plot", "Dot-and-whisker",
+        "Свечи (OHLC)", "Диаграмма Парето",
+        "Дендрограмма", "Cluster dendrogram",
+        "Sankey", "Alluvial diagram", "Chord",
+        "Сетевой график", "Hive plot", "Arc diagram",
+        "Дерево (tree diagram)", "Circle packing",
+        "Adjacency matrix", "Mapper algorithm",
+        "Hexbin", "Stream plot", "Streamlines",
+        "Bode plot", "Smith chart", "Nyquist plot",
+        "Root locus", "Constellation diagram",
+        "Ribbon plot 3D", "Waterfall spectrogram 3D",
+        "Riemann surface 3D", "Joyplot 3D", "Isosurface 3D",
+        "Choropleth", "Flow map", "Isopleth", "Cartogram",
+        "Dot density map", "Hodograph", "Роза ветров",
+        "Skew-T log-P", "Thermodynamic diagram",
+        "Диаграмма Вороного", "Выпуклая оболочка", "Alpha shape",
+        "Volcano plot", "ROC curve", "Manhattan plot",
+        "MA plot", "Recurrence plot", "Cobweb plot",
+        "Poincaré plot", "Phase portrait",
+        "Dot plot", "Lollipop", "Пирамида", "Sparkline",
+        "Cycle plot", "Bump chart", "Slopegraph",
+        "Dumbbell plot", "Bar of pie", "Ribbon plot 2D",
+        "Bullet chart", "Funnel chart",
+        "Календарная теплокарта", "Полярная теплокарта",
+        "Диаграмма бифуркаций", "Parallel coordinates",
+        "Radar chart", "Спидометр",
+    )
+
     def _on_motion_tooltip(self, event):
         if not self.show_tooltip_var.get() or self.tooltip_annot is None:
             return
@@ -2749,12 +9889,7 @@ class PlotsMixin:
         ex, ey = event.xdata, event.ydata
         best = None
         best_d2 = float('inf')
-        skip = ("Круговая", "Heatmap", "Contour", "Imshow",
-                "Box plot", "Violin", "Treemap", "Sunburst",
-                "Мозаика", "Радиальная", "Столбчатая с накоплением",
-                "Вложенная круговая", "Полигон", "Кольцевая",
-                "Полярный scatter", "Пузырьковая", "Quiver",
-                "Водопад", "Гант")                      # [NEW]
+        skip = self._TOOLTIP_SKIP
         subplot_idx = self.axes.index(ax) if ax in self.axes else 0
         for d in self.graphs_data:
             if d['type'] in skip or "3D" in d['type']:
@@ -2814,6 +9949,15 @@ class PlotsMixin:
         ax = event.inaxes
         if not hasattr(ax, 'get_zlim'):
             return
+        subplot_idx = self.axes.index(ax) if ax in self.axes else 0
+        # Пропускаем не-data-3D типы
+        for d in self.graphs_data:
+            if d.get('subplot_index', 0) != subplot_idx:
+                continue
+            if d['type'] in ("Radial tree 3D", "3D Quiver",
+                             "Riemann surface 3D", "Isosurface 3D",
+                             "Waterfall spectrogram 3D"):
+                return
         try:
             ax.M = ax.get_proj()
             x3, y3, _ = proj3d.inv_transform(event.xdata,
@@ -2822,7 +9966,6 @@ class PlotsMixin:
             return
         best = None
         best_d2 = float('inf')
-        subplot_idx = self.axes.index(ax) if ax in self.axes else 0
         for d in self.graphs_data:
             if "3D" not in d['type']:
                 continue
@@ -2955,19 +10098,25 @@ class PlotsMixin:
             filetypes=[("JSON", "*.json")])
         if not path:
             return
-        data = [{k: v for k, v in d.items() if k != 'artist'}
+        data = [{k: v for k, v in d.items()
+                 if k not in ('artist', '_extra_artists', '_cleanup')}
                 for d in self.graphs_data]
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4,
                           default=lambda o: o.tolist()
                           if isinstance(o, np.ndarray) else o)
-            if self.current_doc_idx >= 0:
+            if getattr(self, 'current_doc_idx', -1) >= 0:
                 self.documents[self.current_doc_idx].path = path
                 self.documents[self.current_doc_idx].modified = False
             self._show_history(tr.t('hist.saved_json',
                                      name=os.path.basename(path)))
             self.status_var.set(tr.t('hist.saved_json', name=path))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -2985,13 +10134,15 @@ class PlotsMixin:
             self.folders = [""]
             for d in data:
                 for k, v in [('bins', 10), ('box_data', []),
-                             ('heatmap_data', []), ('folder', ''),
+                             ('heatmap_data', []), ('yerr_matrix', []),
+                             ('folder', ''),
                              ('smooth', False), ('fill', False),
                              ('glow', False), ('notes', ''),
                              ('treemap_parents', []),
                              ('subplot_index', 0),
                              ('unit_x', '—'), ('unit_y', '—'),
-                             ('unit_z', '—')]:
+                             ('unit_z', '—'),
+                             ('_extra_artists', []), ('_cleanup', None)]:
                     d.setdefault(k, v)
                 if d['folder'] and d['folder'] not in self.folders:
                     self.folders.append(d['folder'])
@@ -3003,12 +10154,17 @@ class PlotsMixin:
                 self.line_counter += 1
             self._update_listbox()
             self._redraw()
-            if self.current_doc_idx >= 0:
+            if getattr(self, 'current_doc_idx', -1) >= 0:
                 self.documents[self.current_doc_idx].path = path
                 self.documents[self.current_doc_idx].modified = False
             self._show_history(tr.t('hist.loaded_json',
                                      name=os.path.basename(path)))
             self.status_var.set(tr.t('hist.loaded_json', name=path))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -3022,7 +10178,8 @@ class PlotsMixin:
         if not path:
             return
         try:
-            data = [{k: v for k, v in d.items() if k != 'artist'}
+            data = [{k: v for k, v in d.items()
+                     if k not in ('artist', '_extra_artists', '_cleanup')}
                     for d in self.graphs_data]
             with tempfile.TemporaryDirectory() as td:
                 jp = os.path.join(td, 'graph.json')
@@ -3055,6 +10212,11 @@ class PlotsMixin:
                     zf.write(sp, 'settings.json')
             self._show_history(tr.t('hist.saved_zip',
                                      name=os.path.basename(path)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -3078,6 +10240,11 @@ class PlotsMixin:
                     self._apply_settings_dict(s)
             self._show_history(tr.t('hist.loaded_zip',
                                      name=os.path.basename(path)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -3126,7 +10293,8 @@ class PlotsMixin:
         if not path:
             return
         try:
-            data = [{k: v for k, v in d.items() if k != 'artist'}
+            data = [{k: v for k, v in d.items()
+                     if k not in ('artist', '_extra_artists', '_cleanup')}
                     for d in self.graphs_data]
             with tempfile.TemporaryDirectory() as td:
                 jp = os.path.join(td, 'graph.json')
@@ -3168,6 +10336,11 @@ class PlotsMixin:
                         zf.write(pp, 'plot.png')
             self._show_history(tr.t('hist.saved_graphx',
                                      name=os.path.basename(path)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -3200,6 +10373,11 @@ class PlotsMixin:
                         self._apply_settings_dict(json.load(f))
             self._show_history(tr.t('hist.loaded_graphx',
                                      name=os.path.basename(path)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -3251,6 +10429,11 @@ class PlotsMixin:
                         zf.write(pp, 'preview.png')
             self._show_history(tr.t('hist.anim_saved_file',
                                      name=os.path.basename(path)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
@@ -3291,6 +10474,11 @@ class PlotsMixin:
                 self.anim_params.update(a['anim_params'])
             self._show_history(tr.t('hist.anim_loaded_file',
                                      name=os.path.basename(path)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
             if messagebox.askyesno(tr.t('msg.info'),
                                     tr.t('msg.anim_run_now')):
                 self._start_animation()
@@ -3362,7 +10550,8 @@ class PlotsMixin:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
     def _export_folder_json(self, folder_name):
-        items = [{k: v for k, v in d.items() if k != 'artist'}
+        items = [{k: v for k, v in d.items()
+                  if k not in ('artist', '_extra_artists', '_cleanup')}
                  for d in self.graphs_data
                  if d.get('folder') == folder_name]
         if not items:
@@ -3424,6 +10613,11 @@ class PlotsMixin:
                                      count=len(xd)))
             self.status_var.set(tr.t('hist.imported_csv',
                                      count=len(xd)))
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror(tr.t('msg.import_error'), str(e))
 
@@ -3611,8 +10805,6 @@ class PlotsMixin:
                             name=d['label'], colorscale='Viridis',
                             opacity=0.85, intensity=d['z'],
                             delaunayaxis='z'))
-
-                    # ------------------- [NEW] Водопад / Гант -------------------
                     elif t == "Водопад":
                         vals = list(d['y'])
                         labels = d.get('pie_labels') or \
@@ -3634,6 +10826,146 @@ class PlotsMixin:
                             name=d['label'],
                             marker_color=d['color']))
                         fig.update_layout(barmode='overlay')
+                    elif t == "ECDF":
+                        y_arr = np.sort(np.array(d['y'], dtype=float))
+                        xs = np.concatenate([[y_arr[0]], y_arr])
+                        ys = np.concatenate([[0],
+                                              np.arange(1, len(y_arr) + 1)
+                                              / len(y_arr)])
+                        fig.add_trace(go.Scatter(
+                            x=xs.tolist(), y=ys.tolist(),
+                            mode='lines', name=d['label'],
+                            line_shape='hv'))
+                    elif t == "Step plot":
+                        fig.add_trace(go.Scatter(
+                            x=d['x'], y=d['y'],
+                            mode='lines', name=d['label'],
+                            line_shape='hv'))
+                    elif t == "Strip plot":
+                        rng = np.random.default_rng(42)
+                        for i, g in enumerate(d.get('box_data', [])):
+                            g_arr = np.array(g, dtype=float)
+                            jitter = rng.normal(0, 0.06, size=len(g_arr))
+                            fig.add_trace(go.Scatter(
+                                x=(np.full_like(g_arr, i) + jitter).tolist(),
+                                y=g_arr.tolist(),
+                                mode='markers', name=f"{d['label']} #{i+1}"))
+                    elif t == "Свечи (OHLC)":
+                        groups = d.get('box_data', [])
+                        if len(groups) >= 4:
+                            fig.add_trace(go.Candlestick(
+                                x=d['x'],
+                                open=groups[0],
+                                high=groups[1],
+                                low=groups[2],
+                                close=groups[3],
+                                name=d['label']))
+                    elif t == "Диаграмма Парето":
+                        y_arr = np.array(d['y'], dtype=float)
+                        order = np.argsort(-y_arr)
+                        ys = y_arr[order]
+                        xs = [d['x'][i] for i in order]
+                        cum = np.cumsum(ys) / ys.sum() * 100
+                        fig.add_trace(go.Bar(x=xs, y=ys.tolist(),
+                                              name=d['label']))
+                        fig.add_trace(go.Scatter(
+                            x=xs, y=cum.tolist(),
+                            mode='lines+markers', name='Cum %',
+                            yaxis='y2'))
+                        fig.update_layout(
+                            yaxis2=dict(overlaying='y', side='right',
+                                         range=[0, 105]))
+                    elif t == "Manhattan plot":
+                        z_vals = d.get('z', [])
+                        if z_vals and len(z_vals) == len(d['x']):
+                            chroms = np.array(z_vals, dtype=float)
+                            unique_c = np.unique(chroms)
+                            colors_ = ['#1f77b4', '#ff7f0e',
+                                        '#2ca02c', '#d62728',
+                                        '#9467bd', '#8c564b',
+                                        '#e377c2', '#7f7f7f']
+                            offset = 0.0
+                            for i, c_ in enumerate(unique_c):
+                                mask = chroms == c_
+                                xs = np.array(d['x'])[mask]
+                                ys = np.array(d['y'])[mask]
+                                span = (xs.max() - xs.min()
+                                        if len(xs) > 1 else 1.0)
+                                fig.add_trace(go.Scatter(
+                                    x=(xs - xs.min() + offset).tolist(),
+                                    y=ys.tolist(),
+                                    mode='markers',
+                                    name=f"Chr {int(c_)}",
+                                    marker=dict(
+                                        color=colors_[i % len(colors_)],
+                                        size=4)))
+                                offset += span * 1.1
+                        else:
+                            fig.add_trace(go.Scatter(
+                                x=d['x'], y=d['y'],
+                                mode='markers',
+                                name=d['label'],
+                                marker=dict(color=d['color'],
+                                             size=4)))
+
+                    elif t == "MA plot":
+                        fig.add_trace(go.Scatter(
+                            x=d['x'], y=d['y'], mode='markers',
+                            name=d['label'],
+                            marker=dict(color=d['color'],
+                                         size=6, opacity=0.6)))
+                        fig.add_hline(y=0, line_dash='dash',
+                                       line_color='red')
+
+                    elif t == "Swarm plot":
+                        for i, g in enumerate(d.get('box_data', [])):
+                            g_arr = np.array(g, dtype=float)
+                            rng_ = np.random.default_rng(42 + i)
+                            jitter = rng_.normal(0, 0.08,
+                                                   size=len(g_arr))
+                            labels_ = d.get('pie_labels', [])
+                            lbl_ = (labels_[i]
+                                    if i < len(labels_)
+                                    else f"G{i+1}")
+                            fig.add_trace(go.Scatter(
+                                x=(np.full_like(g_arr, i) +
+                                    jitter).tolist(),
+                                y=g_arr.tolist(),
+                                mode='markers',
+                                name=str(lbl_),
+                                marker=dict(color=d['color'],
+                                             size=6,
+                                             opacity=0.6)))
+
+                    elif t == "Cherry blossom plot":
+                        for i, g in enumerate(d.get('box_data', [])):
+                            g_arr = np.array(g, dtype=float)
+                            qs = [0, 25, 50, 75, 100]
+                            qvals = [float(np.percentile(g_arr, q))
+                                      for q in qs]
+                            labels_ = d.get('pie_labels', [])
+                            lbl_ = (labels_[i]
+                                    if i < len(labels_)
+                                    else f"G{i+1}")
+                            fig.add_trace(go.Box(
+                                y=g_arr.tolist(),
+                                name=str(lbl_),
+                                marker_color=d['color']))
+
+                    elif t == "Ribbon plot 2D":
+                        fig.add_trace(go.Scatter(
+                            x=d['x'], y=d['y'],
+                            mode='lines',
+                            name=f"{d['label']} (верх)",
+                            line=dict(color=d['color'])))
+                        fig.add_trace(go.Scatter(
+                            x=d['x'], y=d.get('z', []),
+                            mode='lines',
+                            name=f"{d['label']} (низ)",
+                            line=dict(color=d['color'],
+                                       dash='dash'),
+                            fill='tonexty',
+                            fillcolor=d['color']))
                 except Exception:
                     continue
             fig.update_layout(title=self.plot_title_var.get(),
@@ -3679,12 +11011,14 @@ class PlotsMixin:
 
                 t = d['type']
                 if t in ("Heatmap", "Contour", "Imshow",
-                          "3D Поверхность", "3D Сетка"):
+                          "3D Поверхность", "3D Сетка", "Chord",
+                          "Дендрограмма", "Stream plot"):
                     for row in d.get('heatmap_data', []):
                         ws.append(list(row))
                 elif t in ("Box plot", "Violin",
                             "Вложенная круговая", "Мозаика",
-                            "Столбчатая с накоплением"):
+                            "Столбчатая с накоплением", "Свечи (OHLC)",
+                            "Strip plot", "Ridge plot"):
                     groups = d.get('box_data', [])
                     max_g = max((len(g) for g in groups), default=0)
                     for r in range(max_g):
@@ -3793,7 +11127,6 @@ class PlotsMixin:
                 entry.insert(0, ", ".join(fmt_num(v) for v in vals))
                 n = len(vals)
 
-            # Автовыбор типа
             if 'z' in cols_data and 'x' in cols_data:
                 self.type_var.set(tr.type_name("3D Линия"))
             else:
@@ -3802,6 +11135,11 @@ class PlotsMixin:
 
             self._show_history(tr.t('excel.imported', n=n))
             self.notebook.select(0)
+            try:
+                self._push_recent(path)
+                self._save_config()
+            except Exception:
+                pass
 
         ttk.Button(pick, text=tr.t('excel.apply'),
                     command=proceed).pack(pady=10)

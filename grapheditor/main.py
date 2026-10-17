@@ -14,6 +14,9 @@ try:
     from config import load_config, save_config
     from autosave import AutosaveMixin
     from documents import DocumentsMixin
+    from palettes import PalettesMixin
+    from code_export import CodeExportMixin
+    from pdf_export import PdfExportMixin
 except ImportError as e:
     from tkinter import messagebox
     messagebox.showerror("ImportError", str(e))
@@ -32,8 +35,12 @@ class AdvancedGraphEditorApp(
     ThemesMixin,
     DocumentsMixin,
     AutosaveMixin,
+    PalettesMixin,
+    CodeExportMixin,
+    PdfExportMixin,
 ):
-    def __init__(self, root, geometry="1250x1250", title="GraphEditor Pro v1.2.0"):
+    def __init__(self, root, geometry="1250x1250",
+                 title="GraphEditor Pro v1.3.0"):
         self.root = root
         self.root.title(title)
         self.root.geometry(geometry)
@@ -179,12 +186,12 @@ class AdvancedGraphEditorApp(
 
     # ---------------------------------------------------------------
     def _on_close(self):
-        # Спросить про несохранённые документы
         for i, d in enumerate(list(self.documents)):
             if getattr(d, 'modified', False):
                 ans = messagebox.askyesnocancel(
                     "Выход",
-                    f"Документ «{d.name}» изменён.\nСохранить перед выходом?",
+                    f"Документ «{d.name}» изменён.\n"
+                    f"Сохранить перед выходом?",
                     parent=self.root)
                 if ans is None:
                     return
@@ -227,16 +234,20 @@ class AdvancedGraphEditorApp(
             messagebox.showerror("Ошибка", str(e))
 
 
-if __name__ == "__main__":
+def main():
     import sys
     if sys.platform == 'win32':
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "GraphEditorPro.1.2.0")
+                "GraphEditorPro.1.3.0")
         except Exception as e:
             print(e)
 
     root = TkinterDnD.Tk()
     app = AdvancedGraphEditorApp(root)
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
