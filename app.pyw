@@ -1,5 +1,4 @@
 import os, sys
-from narwhals._compliant import window
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PKG  = os.path.join(ROOT, 'grapheditor')
@@ -16,7 +15,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "GraphEditorPro.1.4.0")
+                "GraphEditorPro.1.5.0")
         except Exception:
             pass
 

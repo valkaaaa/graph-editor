@@ -5,7 +5,8 @@ try:
     from tkinter import messagebox
     from tkinterdnd2 import TkinterDnD
 
-    from translator import tr, INTERNAL_TYPES, INTERNAL_ANIM_TYPES
+    from translator import (tr, INTERNAL_TYPES, INTERNAL_ANIM_TYPES,
+                            TRANSLATIONS)
     from ui import UIMixin
     from plots import PlotsMixin
     from animations import AnimationsMixin
@@ -14,9 +15,15 @@ try:
     from config import load_config, save_config
     from autosave import AutosaveMixin
     from documents import DocumentsMixin
+
     from palettes import PalettesMixin
     from code_export import CodeExportMixin
     from pdf_export import PdfExportMixin
+    from clipboard import ClipboardMixin
+    from shortcuts import ShortcutsMixin
+    from autotheme import AutoThemeMixin
+    from sounds import SoundMixin
+    from plugins import load_plugins
 except ImportError as e:
     from tkinter import messagebox
     messagebox.showerror("ImportError", str(e))
@@ -25,6 +32,33 @@ except Exception as e:
     from tkinter import messagebox
     messagebox.showerror("Error", str(e))
     raise
+
+
+# Языки, которые есть в TRANSLATIONS — для автоопределения
+_TRANSLATIONS_KEYS = set(TRANSLATIONS.keys())
+
+_LANG_ALIASES = {
+    'ua': 'ua',
+    'by': 'by',
+    'kz': 'kz',
+    'ja': 'ja',
+    'kr': 'kr',
+    'zh': 'zh',
+    'ru': 'ru'
+}
+
+
+def _detect_system_language():
+    """Пытается определить язык системы для первого запуска."""
+    try:
+        import locale
+        sys_lang = (locale.getdefaultlocale()[0] or 'en')[:2].lower()
+        sys_lang = _LANG_ALIASES.get(sys_lang, sys_lang)
+        if sys_lang in _TRANSLATIONS_KEYS:
+            return sys_lang
+    except Exception:
+        pass
+    return None
 
 
 class AdvancedGraphEditorApp(
@@ -38,9 +72,13 @@ class AdvancedGraphEditorApp(
     PalettesMixin,
     CodeExportMixin,
     PdfExportMixin,
+    ClipboardMixin,
+    ShortcutsMixin,
+    AutoThemeMixin,
+    SoundMixin,
 ):
     def __init__(self, root, geometry="1250x1250",
-                 title="GraphEditor Pro v1.3.0"):
+                 title="GraphEditor Pro v1.5.0"):
         self.root = root
         self.root.title(title)
         self.root.geometry(geometry)
@@ -48,6 +86,7 @@ class AdvancedGraphEditorApp(
         # ---------- Данные ----------
         self.graphs_data = []
         self.line_counter = 0
+        self._clipboard = []
 
         # ---------- Subplots ----------
         self.subplot_rows = 1
@@ -94,6 +133,13 @@ class AdvancedGraphEditorApp(
             'language': 'ru',
             'theme': 'light',
             'show_tour_on_start': False,
+            # ---- новые ключи ----
+            'hotkeys': {},                  # action_id -> seq
+            'auto_theme_by_time': False,
+            'theme_day_start': 7,
+            'theme_day_end': 19,
+            'theme_day': 'light',
+            'theme_night': 'dark',
         }
 
         self.tooltip_annot = None
@@ -143,10 +189,22 @@ class AdvancedGraphEditorApp(
         self._recent_files = saved.get('recent', [])
         self._saved_geometry = saved.get('geometry')
 
-        # Текущая тема
+        # ---------- Автоопределение языка при первом запуске ----------
+        if 'language' not in saved.get('settings', {}):
+            detected = _detect_system_language()
+            if detected:
+                self.settings['language'] = detected
+
+        # ---------- Текущая тема ----------
         self.current_theme = self.settings.get('theme', 'light')
 
         tr.set_lang(self.settings.get('language', 'ru'))
+
+        # ---------- Плагины ----------
+        self.plugin_registry = load_plugins(self)
+
+        # ---------- Звуки ------------
+        self._init_sounds()
 
         # ---------- Сборка ----------
         self._build_ui()
@@ -157,7 +215,7 @@ class AdvancedGraphEditorApp(
         self.root.dnd_bind('<<Drop>>', self._on_drop)
 
         self._build_menu()
-        self._bind_hotkeys()
+        self._bind_hotkeys()            # ShortcutsMixin
 
         try:
             self._set_window_icon()
@@ -165,6 +223,7 @@ class AdvancedGraphEditorApp(
             pass
 
         self._apply_theme(self.current_theme)
+        self._init_auto_theme()         # AutoThemeMixin
 
         if self._saved_geometry:
             try:
@@ -186,6 +245,7 @@ class AdvancedGraphEditorApp(
 
     # ---------------------------------------------------------------
     def _on_close(self):
+        # Спросить про несохранённые документы
         for i, d in enumerate(list(self.documents)):
             if getattr(d, 'modified', False):
                 ans = messagebox.askyesnocancel(
@@ -240,7 +300,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "GraphEditorPro.1.3.0")
+                "GraphEditorPro.1.5.0")
         except Exception as e:
             print(e)
 

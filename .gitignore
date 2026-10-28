@@ -4,14 +4,16 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-dist/
-docs/
 
 *.egg-info/
 *.egg
 pip-log.txt
 pip-delete-this-directory.txt
+
+build/
+dist/
+docs/
+ignore/
 
 # ============ Виртуальные окружения ============
 .venv/

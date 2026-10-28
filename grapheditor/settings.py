@@ -1,7 +1,7 @@
 import tkinter as tk
 
 APP_NAME = "GraphEditor Pro"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.5.0"
 GRAPHX_MANIFEST = "manifest.json"
 i = "sin(t*x) + cos(t*y)"
 

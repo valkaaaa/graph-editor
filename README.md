@@ -2,7 +2,7 @@
 
 **Продвинутый графический редактор для научной визуализации с поддержкой 100+ типов графиков, анимаций, тем и мультиязычного интерфейса.**
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue)
+Версия 1.5.0
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -20,7 +20,6 @@ GraphEditor Pro — настольное приложение на Python + Tkin
 - [Форматы файлов](#форматы-файлов)
 - [Горячие клавиши](#горячие-клавиши)
 - [Скриншоты](#скриншоты)
-- [Структура проекта](#структура-проекта)
 - [Разработка](#разработка)
 - [Лицензия](#лицензия)
 
@@ -77,18 +76,18 @@ GraphEditor Pro — настольное приложение на Python + Tkin
 - **Проекты** `.graphx` (zip-контейнер с manifest, графиками, настройками и превью).
 
 ### Экспорт
-| Формат | Что сохраняет |
-|---|---|
-| `.json` | Все объекты активного документа |
-| `.zip` | JSON + PNG-превью + настройки |
-| `.graphx` | Полный проект (zip с manifest) |
-| `.graphxtpl` | Шаблон (для повторного применения) |
-| `.graphxanim` | Конфигурация анимации + превью |
-| `.png` / `.svg` / `.pdf` | Холст в высоком DPI |
-| `.html` | Интерактивный HTML через Plotly |
-| `.csv` | Все данные в CSV |
-| `.xlsx` | Excel, один лист на объект |
-| `.py` | **Готовый Python-скрипт** с matplotlib-кодом |
+| Формат                   | Что сохраняет                                |
+|--------------------------|----------------------------------------------|
+| `.json`                  | Все объекты активного документа              |
+| `.zip`                   | JSON + PNG-превью + настройки                |
+| `.graphx`                | Полный проект (zip с manifest)               |
+| `.graphxtpl`             | Шаблон (для повторного применения)           |
+| `.graphxanim`            | Конфигурация анимации + превью               |
+| `.png` / `.svg` / `.pdf` | Холст в высоком DPI                          |
+| `.html`                  | Интерактивный HTML через Plotly              |
+| `.csv`                   | Все данные в CSV                             |
+| `.xlsx`                  | Excel, один лист на объект                   |
+| `.py`                    | **Готовый Python-скрипт** с matplotlib-кодом |
 
 **Экспорт PDF** с выбором размера страницы (A3/A4/A5/Letter/Legal), ориентации, отступов, DPI и прозрачного фона.
 
@@ -166,136 +165,97 @@ grapheditor
 
 ## Типы графиков
 
-Полный список — в файле [TYPES.md](TYPES.md). Примеры данных — в [EXAMPLES.md](EXAMPLES.md).
+Полный список — в файле [TYPES.txt](TYPES.txt). Примеры данных — в [EXAMPLES.txt](EXAMPLES.txt).
 
 Кратко по категориям:
 
-| Категория | Примеры |
-|---|---|
-| 2D базовые | Линия, Точечная, Столбчатая, Гистограмма, Круговая, Step plot |
-| 2D продвинутые | Box plot, Violin, Heatmap, Contour, Imshow, Polygon |
-| Статистические | Q-Q, ECDF, Ridge, Strip, Raincloud, Beanplot, Swarm, Cherry Blossom, Dot-and-Whisker |
-| Финансовые | Свечи OHLC, Renko, Point-and-Figure, Водопад, Парето |
-| Проектные | Гант, Воронка, Пулевая, Pyramid, Slopegraph, Dumbbell, Bump |
-| Сетевые | Network, Chord, Sankey, Alluvial, Hive, Arc, Tree, Radial Tree |
-| Иерархические | Dendrogram, Cluster Dendrogram, Circle Packing, Adjacency Matrix, Treemap, Sunburst |
-| Поля | Stream plot, Streamlines, Quiver, 3D Quiver |
-| Радиотехника | Bode, Smith, Nyquist, Root locus, Constellation |
-| ML/научные | Volcano, ROC, Manhattan, MA, Mapper, Recurrence, Cobweb, Poincaré, Phase portrait |
-| Метео/гео | Skew-T log-P, Thermodynamic, Wind rose, Hodograph, Choropleth, Cartogram, Isopleth, Dot density |
-| Геометрия | Voronoi, Convex hull, Alpha shape |
-| 3D | 3D Линия, 3D Точечная, 3D Столбчатая, 3D Гистограмма, 3D Круговая, 3D Поверхность, 3D Сетка, 3D Полигон, 3D Триангуляция, Ribbon 3D, Waterfall 3D, Riemann surface 3D, Joyplot 3D, Isosurface 3D |
-| Специальные | Sparkline, Cycle plot, Calendar heatmap, Polar heatmap, Bifurcation, Parallel coordinates, Radar, Gauge |
+| Категория      | Примеры                                                                                                                                                                                          |
+|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2D базовые     | Линия, Точечная, Столбчатая, Гистограмма, Круговая, Step plot                                                                                                                                    |
+| 2D продвинутые | Box plot, Violin, Heatmap, Contour, Imshow, Polygon                                                                                                                                              |
+| Статистические | Q-Q, ECDF, Ridge, Strip, Raincloud, Beanplot, Swarm, Cherry Blossom, Dot-and-Whisker                                                                                                             |
+| Финансовые     | Свечи OHLC, Renko, Point-and-Figure, Водопад, Парето                                                                                                                                             |
+| Проектные      | Гант, Воронка, Пулевая, Pyramid, Slopegraph, Dumbbell, Bump                                                                                                                                      |
+| Сетевые        | Network, Chord, Sankey, Alluvial, Hive, Arc, Tree, Radial Tree                                                                                                                                   |
+| Иерархические  | Dendrogram, Cluster Dendrogram, Circle Packing, Adjacency Matrix, Treemap, Sunburst                                                                                                              |
+| Поля           | Stream plot, Streamlines, Quiver, 3D Quiver                                                                                                                                                      |
+| Радиотехника   | Bode, Smith, Nyquist, Root locus, Constellation                                                                                                                                                  |
+| ML/научные     | Volcano, ROC, Manhattan, MA, Mapper, Recurrence, Cobweb, Poincaré, Phase portrait                                                                                                                |
+| Метео/гео      | Skew-T log-P, Thermodynamic, Wind rose, Hodograph, Choropleth, Cartogram, Isopleth, Dot density                                                                                                  |
+| Геометрия      | Voronoi, Convex hull, Alpha shape                                                                                                                                                                |
+| 3D             | 3D Линия, 3D Точечная, 3D Столбчатая, 3D Гистограмма, 3D Круговая, 3D Поверхность, 3D Сетка, 3D Полигон, 3D Триангуляция, Ribbon 3D, Waterfall 3D, Riemann surface 3D, Joyplot 3D, Isosurface 3D |
+| Специальные    | Sparkline, Cycle plot, Calendar heatmap, Polar heatmap, Bifurcation, Parallel coordinates, Radar, Gauge                                                                                          |
 
 ---
 
 ## Форматы файлов
 
-| Расширение | Назначение |
-|---|---|
-| `.graphx` | Полный проект (zip-контейнер) |
-| `.graphxtpl` | Шаблон данных и стиля |
-| `.graphxanim` | Конфигурация анимации |
-| `.graphxtemp` | Автосохранение (создаётся автоматически) |
-| `.json` | Объекты активного документа |
-| `.zip` | JSON + превью + настройки |
-| `.csv` | Данные таблицей |
-| `.xlsx` | Excel, один лист на объект |
-| `.png` / `.svg` / `.pdf` | Изображение холста |
-| `.html` | Интерактивный HTML (Plotly) |
-| `.py` | Готовый Python-скрипт |
+| Расширение               | Назначение                               |
+|--------------------------|------------------------------------------|
+| `.graphx`                | Полный проект (zip-контейнер)            |
+| `.graphxtpl`             | Шаблон данных и стиля                    |
+| `.graphxanim`            | Конфигурация анимации                    |
+| `.graphxtemp`            | Автосохранение (создаётся автоматически) |
+| `.json`                  | Объекты активного документа              |
+| `.zip`                   | JSON + превью + настройки                |
+| `.csv`                   | Данные таблицей                          |
+| `.xlsx`                  | Excel, один лист на объект               |
+| `.png` / `.svg` / `.pdf` | Изображение холста                       |
+| `.html`                  | Интерактивный HTML (Plotly)              |
+| `.py`                    | Готовый Python-скрипт                    |
 
 ---
 
 ## Горячие клавиши
 
 ### Файлы
-| Клавиши | Действие |
-|---|---|
-| `Ctrl+S` | Сохранить JSON |
-| `Ctrl+Shift+S` | Сохранить как… |
-| `Ctrl+O` | Открыть JSON |
-| `Ctrl+P` | Сохранить как изображение |
-| `Ctrl+E` | Экспорт в Excel |
-| `Ctrl+F` | Поиск по объектам |
+| Клавиши        | Действие                  |
+|----------------|---------------------------|
+| `Ctrl+S`       | Сохранить JSON            |
+| `Ctrl+Shift+S` | Сохранить как…            |
+| `Ctrl+O`       | Открыть JSON              |
+| `Ctrl+P`       | Сохранить как изображение |
+| `Ctrl+E`       | Экспорт в Excel           |
+| `Ctrl+F`       | Поиск по объектам         |
 
 ### Правка
-| Клавиши | Действие |
-|---|---|
-| `Ctrl+Z` | Отменить |
-| `Ctrl+Y` / `Ctrl+Shift+Z` | Повторить |
-| `Ctrl+D` | Дублировать выбранное |
-| `Ctrl+Shift+N` | Очистить всё |
-| `Delete` | Удалить выбранное |
+| Клавиши                   | Действие              |
+|---------------------------|-----------------------|
+| `Ctrl+Z`                  | Отменить              |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Повторить             |
+| `Ctrl+D`                  | Дублировать выбранное |
+| `Ctrl+Shift+N`            | Очистить всё          |
+| `Delete`                  | Удалить выбранное     |
 
 ### Документы
-| Клавиши | Действие |
-|---|---|
-| `Ctrl+N` / `Ctrl+T` | Новый документ |
-| `Ctrl+W` | Закрыть документ |
-| `Ctrl+Tab` | Следующий документ |
-| `Ctrl+Shift+Tab` | Предыдущий документ |
+| Клавиши             | Действие            |
+|---------------------|---------------------|
+| `Ctrl+N` / `Ctrl+T` | Новый документ      |
+| `Ctrl+W`            | Закрыть документ    |
+| `Ctrl+Tab`          | Следующий документ  |
+| `Ctrl+Shift+Tab`    | Предыдущий документ |
 
 ### Прочее
-| Клавиши | Действие |
-|---|---|
+| Клавиши   | Действие       |
+|-----------|----------------|
 | `Ctrl+\`` | Python-консоль |
-| `F5` | Перерисовать |
-| `F11` | Полный экран |
-| `Esc` | Закрыть диалог |
+| `F5`      | Перерисовать   |
+| `F11`     | Полный экран   |
+| `Esc`     | Закрыть диалог |
 
 ---
 
 ## Скриншоты
 
-| Создание | Статистика |
-|---|---|
+| Создание                           | Статистика                      |
+|------------------------------------|---------------------------------|
 | _добавьте screenshot-creation.png_ | _добавьте screenshot-stats.png_ |
 
-| 3D-графики | Тёмная тема |
-|---|---|
+| 3D-графики                   | Тёмная тема                    |
+|------------------------------|--------------------------------|
 | _добавьте screenshot-3d.png_ | _добавьте screenshot-dark.png_ |
 
 > 📷 Скриншоты можно положить в `assets/screenshots/` и сослаться сюда: `![alt](assets/screenshots/name.png)`.
-
----
-
-## Структура проекта
-
-```
-graph-editor/
-├── app.pyw                 # точка входа
-├── pyproject.toml          # метаданные, зависимости, entry point
-├── requirements.txt        # альтернативный список зависимостей
-├── README.md               # этот файл
-├── EXAMPLES.md             # примеры данных для всех типов
-├── TYPES.md                # полный список типов графиков
-├── .gitignore
-├── .python-version         # 3.12 / 3.11 / 3.10
-│
-├── assets/
-│   ├── icon.ico
-│   ├── icon.png
-│   └── icons/              # иконки тулбара
-│
-└── grapheditor/            # основной пакет
-    ├── __init__.py         # __version__, __author__
-    ├── main.py             # AdvancedGraphEditorApp + main()
-    ├── ui.py               # интерфейс, меню, диалоги, консоль
-    ├── plots.py            # построение всех типов графиков
-    ├── animations.py       # 14 типов анимаций
-    ├── templates.py        # встроенные и пользовательские шаблоны
-    ├── themes.py           # 14 встроенных + пользовательские темы
-    ├── documents.py        # мультидокументность (вкладки)
-    ├── autosave.py         # автосохранение
-    ├── palettes.py         # палитры цветов (новое)
-    ├── code_export.py      # экспорт в Python-скрипт (новое)
-    ├── pdf_export.py       # экспорт PDF с настройкой страницы (новое)
-    ├── translator.py       # i18n (20 языков)
-    ├── settings.py         # константы, ToolTip, единицы
-    ├── config.py           # загрузка/сохранение настроек
-    └── logging_setup.py    # логирование ошибок
-```
 
 ---
 
@@ -304,16 +264,16 @@ graph-editor/
 ### Зависимости
 Все — в `pyproject.toml` и `requirements.txt`:
 
-| Пакет | Назначение |
-|---|---|
-| `numpy`, `matplotlib` | ядро построения графиков |
-| `tkinterdnd2` | drag-and-drop файлов |
-| `pillow` | GIF-анимации, иконки |
-| `imageio-ffmpeg` | MP4-анимации |
-| `openpyxl` | Excel |
-| `plotly` | интерактивный HTML |
-| `scipy` | статистика, аппроксимации, пики, дендрограммы |
-| `networkx` | сетевые графы |
+| Пакет                 | Назначение                                    |
+|-----------------------|-----------------------------------------------|
+| `numpy`, `matplotlib` | ядро построения графиков                      |
+| `tkinterdnd2`         | drag-and-drop файлов                          |
+| `pillow`              | GIF-анимации, иконки                          |
+| `imageio-ffmpeg`      | MP4-анимации                                  |
+| `openpyxl`            | Excel                                         |
+| `plotly`              | интерактивный HTML                            |
+| `scipy`               | статистика, аппроксимации, пики, дендрограммы |
+| `networkx`            | сетевые графы                                 |
 
 ### Установка для разработки
 
@@ -321,24 +281,6 @@ graph-editor/
 pip install -e ".[dev]"
 pre-commit install        # опционально
 ```
-
-### Проверка кода
-
-```bash
-ruff check .
-ruff format --check .
-pytest                    # если добавите tests/
-```
-
-### Сборка `.exe` (Windows)
-
-```bash
-pip install -e ".[build]"
-pyinstaller --noconfirm --windowed --icon=assets/icon.ico \
-    --name=GraphEditorPro --add-data "assets;assets" app.pyw
-```
-
-> `.spec`-файл рекомендуется хранить в репозитории для воспроизводимости сборки.
 
 ### Добавление нового типа графика
 
@@ -360,7 +302,7 @@ pyinstaller --noconfirm --windowed --icon=assets/icon.ico \
 
 ## Лицензия
 
-Проект распространяется под лицензией **MIT**. См. файл [LICENSE](LICENSE).
+Проект распространяется под лицензией **MIT**. См. файл [LICENSE.txt](LICENSE.txt).
 
 ---
 
