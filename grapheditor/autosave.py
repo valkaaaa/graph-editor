@@ -95,11 +95,7 @@ class AutosaveMixin:
                     zf.write(ap, 'autosave.json')
         except Exception:
             log.exception("autosave write failed")
-            return  # НЕ сбрасываем modified, чтобы повторить на следующем тике
-
-        # Сбрасываем флаг modified только после успешной записи
-        for d in self.documents:
-            d.modified = False
+            return
 
     # ------------------------------------------------------------------
     # Проверка при старте

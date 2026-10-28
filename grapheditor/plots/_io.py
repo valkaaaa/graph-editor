@@ -852,24 +852,33 @@ class IOMixin:
     # IO — JSON
     # ========================================================================
     def _save_json(self):
-        path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")])
-        if not path:
-            return
+        # Если путь уже известен — сохраняем молча, без диалога.
+        # Save As остаётся на Ctrl+Shift+S (_save_json_as).
+        current_path = None
+        if getattr(self, "current_doc_idx", -1) >= 0:
+            current_path = self.documents[self.current_doc_idx].path
+
+        if current_path:
+            path = current_path
+        else:
+            return self._save_json_as()
+
         data = [{k: v for k, v in d.items()
                  if k not in ('artist', '_extra_artists', '_cleanup')}
                 for d in self.graphs_data]
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4,
+                          allow_nan=False,
                           default=lambda o: o.tolist()
                           if isinstance(o, np.ndarray) else o)
-            if getattr(self, 'current_doc_idx', -1) >= 0:
-                self.documents[self.current_doc_idx].path = path
-                self.documents[self.current_doc_idx].modified = False
+            if self.current_doc_idx >= 0:
+                doc = self.documents[self.current_doc_idx]
+                doc.path = path
+                doc.modified = False
+            self._update_window_title()  # ← снимает звёздочку, ставит basename
             self._show_history(tr.t('hist.saved_json',
-                                     name=os.path.basename(path)))
+                                    name=os.path.basename(path)))
             self.status_var.set(tr.t('hist.saved_json', name=path))
             try:
                 self._push_recent(path)
@@ -915,10 +924,15 @@ class IOMixin:
             self._update_listbox()
             self._redraw()
             if getattr(self, 'current_doc_idx', -1) >= 0:
-                self.documents[self.current_doc_idx].path = path
-                self.documents[self.current_doc_idx].modified = False
+                doc = self.documents[self.current_doc_idx]
+                doc.path = path
+                doc.modified = False
+                # Имя документа тоже обновляем — иначе «Без имени 1» останется
+                # до следующего _new_document.
+                doc.name = os.path.splitext(os.path.basename(path))[0]
+            self._update_window_title()
             self._show_history(tr.t('hist.loaded_json',
-                                     name=os.path.basename(path)))
+                                    name=os.path.basename(path)))
             self.status_var.set(tr.t('hist.loaded_json', name=path))
             try:
                 self._push_recent(path)

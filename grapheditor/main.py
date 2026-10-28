@@ -77,8 +77,13 @@ class AdvancedGraphEditorApp(
     AutoThemeMixin,
     SoundMixin,
 ):
-    def __init__(self, root, geometry="1250x1250",
-                 title="GraphEditor Pro v1.5.0"):
+    def __init__(self, root, geometry="1250x1250", title=None):
+        try:
+            from grapheditor import __version__
+        except ImportError:
+            __version__ = "1.5.0"
+        if title is None:
+            title = f"GraphEditor Pro v{__version__}"
         self.root = root
         self.root.title(title)
         self.root.geometry(geometry)
@@ -289,6 +294,10 @@ class AdvancedGraphEditorApp(
             if self.current_doc_idx >= 0:
                 self.documents[self.current_doc_idx].path = path
                 self.documents[self.current_doc_idx].modified = False
+            if self.current_doc_idx >= 0:
+                doc = self.documents[self.current_doc_idx]
+                doc.name = os.path.splitext(os.path.basename(path))[0]
+            self._update_window_title()
             self._show_history(f"Сохранено: {path}")
         except Exception as e:
             messagebox.showerror("Ошибка", str(e))

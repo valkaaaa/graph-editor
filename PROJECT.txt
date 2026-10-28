@@ -45,7 +45,7 @@ project:
             _dialogs.py;
             _menu.py;
             _tree.py;
-        __init.py;
+        __init__.py;
         animations.py;
         autosave.py;
         autotheme.py;
@@ -68,9 +68,9 @@ project:
     requirements.txt;
     pyproject.toml;
     app.pyw;
-    EXAMPLES;
-    TYPES;
-    PROJECT;
-    LICENSE;
+    EXAMPLES.txt;
+    TYPES.md;
+    PROJECT.txt;
+    LICENSE.txt;
     README.md;
 ===========================================================

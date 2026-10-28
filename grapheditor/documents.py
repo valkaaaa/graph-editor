@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -29,11 +30,72 @@ class Document:
 
 class DocumentsMixin:
 
+    # ========================================================================
+    # ЗАГОЛОВОК ОКНА / ТЕКСТ ВКЛАДКИ
+    # ========================================================================
+    def _update_window_title(self):
+        """Единая точка установки заголовка окна и текста вкладки.
+
+        Формат: «GraphEditor Pro vX.Y.Z — <имя>[*]»
+          - <имя> = basename(path), если документ сохранён в файл,
+                    иначе doc.name («Без имени N»)
+          - [*]   = суффикс, только если modified == True
+
+        Вызывается из:
+          - _mark_modified      (после изменения данных)
+          - _save_json / _save_json_as (в plots/_io.py и main.py)
+          - _load_json / _load_zip / _load_graphx (в plots/_io.py)
+          - _new_document
+          - _switch_document
+          - _reset_document
+        """
+        try:
+            from grapheditor import __version__
+        except ImportError:
+            try:
+                from . import __version__
+            except ImportError:
+                __version__ = "1.5.0"
+
+        base = f"GraphEditor Pro v{__version__}"
+
+        if (self.current_doc_idx < 0
+                or self.current_doc_idx >= len(self.documents)):
+            try:
+                self.root.title(base)
+            except Exception:
+                pass
+            return
+
+        doc = self.documents[self.current_doc_idx]
+        if doc.path:
+            display = os.path.basename(doc.path)
+        else:
+            display = doc.name
+
+        star = " *" if getattr(doc, "modified", False) else ""
+
+        try:
+            self.root.title(f"{base} — {display}{star}")
+        except Exception:
+            pass
+
+        try:
+            self.plot_notebook.tab(doc.plot_frame, text=display + star)
+        except Exception:
+            pass
+
+    # ========================================================================
+    # ИНИЦИАЛИЗАЦИЯ
+    # ========================================================================
     def _init_documents(self):
         self.documents = []
         self.current_doc_idx = -1
         self._new_document(switch=True)
 
+    # ========================================================================
+    # СОЗДАНИЕ
+    # ========================================================================
     def _new_document(self, switch=True, name=None):
         if name is None:
             name = f"Без имени {len(self.documents) + 1}"
@@ -68,8 +130,14 @@ class DocumentsMixin:
             self.current_doc_idx = prev_idx
             if prev_idx >= 0:
                 self._load_state_from_doc(self.documents[prev_idx])
+
+        # NEW: обновить заголовок окна и текст вкладки
+        self._update_window_title()
         return doc
 
+    # ========================================================================
+    # ПЕРЕКЛЮЧЕНИЕ
+    # ========================================================================
     def _on_plot_tab_changed(self, event=None):
         try:
             idx = self.plot_notebook.index(self.plot_notebook.select())
@@ -96,7 +164,12 @@ class DocumentsMixin:
             self.canvas.draw_idle()
         except Exception:
             pass
+        # NEW: обновить заголовок окна под активный документ
+        self._update_window_title()
 
+    # ========================================================================
+    # СОХРАНЕНИЕ / ЗАГРУЗКА СОСТОЯНИЯ (внутреннее)
+    # ========================================================================
     def _save_current_state_to_doc(self):
         if self.current_doc_idx < 0:
             return
@@ -145,6 +218,9 @@ class DocumentsMixin:
         except Exception:
             pass
 
+    # ========================================================================
+    # ЗАКРЫТИЕ
+    # ========================================================================
     def _close_document(self, idx, ask=True, silent=False):
         if idx < 0 or idx >= len(self.documents):
             return
@@ -177,6 +253,9 @@ class DocumentsMixin:
             self.current_doc_idx = -1
             self._switch_document(new_idx)
 
+    # ========================================================================
+    # СБРОС (последний документ)
+    # ========================================================================
     def _reset_document(self, doc):
         doc.graphs_data = []
         doc.folders = [""]
@@ -186,8 +265,8 @@ class DocumentsMixin:
         doc.redo_stack = []
         doc.modified = False
         doc.path = None
-        if self.current_doc_idx >= 0 \
-                and self.documents[self.current_doc_idx] is doc:
+        if (self.current_doc_idx >= 0
+                and self.documents[self.current_doc_idx] is doc):
             self.axes_secondary = {}
             self.fig.clear()
             self.axes = []
@@ -202,7 +281,12 @@ class DocumentsMixin:
             self._init_crosshair()
             self.canvas.draw()
             self._update_listbox()
+            # NEW: сбросить заголовок окна и текст вкладки
+            self._update_window_title()
 
+    # ========================================================================
+    # НАВИГАЦИЯ
+    # ========================================================================
     def _next_document(self):
         if not self.documents:
             return
@@ -215,12 +299,17 @@ class DocumentsMixin:
         idx = (self.current_doc_idx - 1) % len(self.documents)
         self.plot_notebook.select(self.documents[idx].plot_frame)
 
+    # ========================================================================
+    # ФЛАГ «ИЗМЕНЁН»
+    # ========================================================================
     def _mark_modified(self):
+        """Ставит modified = True и обновляет заголовок.
+
+        Раньше метод формировал строку заголовка сам, что приводило
+        к залипшей звёздочке и «Без имени 1» даже после сохранения.
+        Теперь вся логика — в _update_window_title.
+        """
         if self.current_doc_idx >= 0:
             self.documents[self.current_doc_idx].modified = True
-            try:
-                base = "GraphEditor Pro"
-                name = self.documents[self.current_doc_idx].name
-                self.root.title(f"{base} — {name} *")
-            except Exception:
-                pass
+            # FIX: заголовок формируется в одном месте
+            self._update_window_title()
