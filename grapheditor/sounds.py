@@ -1,11 +1,15 @@
 """Звуковые эффекты через winsound (только Windows).
 
-При отсутствии click.wav — приложение работает без звука.
+На Linux/macOS `winsound` отсутствует — звук автоматически
+отключается, приложение работает без него.
 """
 import os
 import sys
 
-import winsound
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 
 class SoundMixin:
@@ -14,11 +18,18 @@ class SoundMixin:
 
     def _init_sounds(self):
         """Инициализация: находит click.wav и читает флаг из настроек.
-        Вызывается один раз из AdvancedGraphEditorApp.__init__."""
+
+        На не-Windows платформах (или при отсутствии winsound)
+        звук принудительно отключается.
+        """
         path = self._asset_sound_path("click.wav")
         if os.path.exists(path):
             self._click_wav = path
-        self._sound_enabled = self.settings.get('sounds_enabled', True)
+
+        # Звук доступен только если winsound импортировался
+        # (то есть на Windows) и пользователь его не отключил.
+        user_enabled = self.settings.get('sounds_enabled', True)
+        self._sound_enabled = bool(user_enabled) and winsound is not None
 
     def _asset_sound_path(self, filename):
         """Путь к assets/<file> с учётом PyInstaller _MEIPASS."""
@@ -28,8 +39,13 @@ class SoundMixin:
         return os.path.join(base, 'assets', filename)
 
     def _play_click(self):
-        """Воспроизвести клик (асинхронно, не блокирует UI)."""
+        """Воспроизвести клик (асинхронно, не блокирует UI).
+
+        На не-Windows платформах — no-op.
+        """
         if not self._sound_enabled or self._click_wav is None:
+            return
+        if winsound is None:                # двойная защита
             return
         try:
             winsound.PlaySound(
@@ -52,5 +68,9 @@ class SoundMixin:
         return wrapped
 
     def _toggle_click_sound(self, enabled):
-        """Включить/выключить звук (для настроек)."""
-        self._sound_enabled = bool(enabled)
+        """Включить/выключить звук (для настроек).
+
+        На не-Windows платформах всегда остаётся выключенным,
+        даже если пользователь поставил галочку.
+        """
+        self._sound_enabled = bool(enabled) and winsound is not None

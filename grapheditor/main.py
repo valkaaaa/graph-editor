@@ -1,3 +1,20 @@
+# ============================================================================
+# ПРОВЕРКА ПЛАТФОРМЫ
+# ============================================================================
+def _platform_check() -> None:
+    import sys
+
+    if sys.platform != "win32":
+        print(
+            "GraphEditor Pro работает лучше на Windows.\n"
+            f"Текущая платформа: {sys.platform}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    else: return
+
+_platform_check()
+
 try:
     import tkinter as tk
     import imageio_ffmpeg
