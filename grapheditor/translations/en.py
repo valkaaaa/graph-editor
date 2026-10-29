@@ -636,4 +636,9 @@ TEXTS = {
     'create.wavelet_hint': 'Wavelet scalogram: Y — signal (single row).\nX — time (optional, else 0..N-1).\n"Bins" = sampling frequency fs.\nRequires PyWavelets (pip install PyWavelets).',
     'settings.sounds': 'Sounds',
     'settings.sounds_enabled': 'Click sound on button press',
+
+    'settings.tab.interface': 'Interface',
+    'settings.tab.style':     'Fonts & Style',
+    'settings.tab.behavior':  'Behavior',
+    'settings.editing':       'Editing',
 }

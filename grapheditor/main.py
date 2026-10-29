@@ -1,6 +1,3 @@
-# ============================================================================
-# ПРОВЕРКА ПЛАТФОРМЫ
-# ============================================================================
 def _platform_check() -> None:
     import sys
 
@@ -12,8 +9,6 @@ def _platform_check() -> None:
         )
         sys.exit(1)
     else: return
-
-_platform_check()
 
 try:
     import tkinter as tk

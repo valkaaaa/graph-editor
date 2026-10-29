@@ -759,4 +759,9 @@ TEXTS = {
     'create.wavelet_hint': 'Вейвлет-скейлограмма: Y — сигнал (одна строка).\nX — время (опционально, иначе 0..N-1).\n«Кол-во бинов» = частота дискретизации fs.\nТребует PyWavelets (pip install PyWavelets).',
     'settings.sounds': 'Звуки',
     'settings.sounds_enabled': 'Звук кликов при нажатии кнопок',
+
+    'settings.tab.interface': 'Интерфейс',
+    'settings.tab.style':     'Шрифты и стиль',
+    'settings.tab.behavior':  'Поведение',
+    'settings.editing':       'Редактирование',
 }

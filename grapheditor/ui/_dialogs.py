@@ -19,81 +19,84 @@ class DialogsUIMixin:
         win = tk.Toplevel(self.root)
         win.title(tr.t('msg.settings_title'))
         win.transient(self.root)
-        win.geometry("440x980")
 
-        # Язык
-        ttk.Label(win, text=tr.t('settings.language'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(10, 2))
+        # Адаптивный размер
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w = min(560, sw - 80)
+        h = min(680, sh - 120)
+        win.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        win.minsize(480, 380)
+        win.bind('<Escape>', lambda e: win.destroy())
+
+        # ----- Кнопки: прибиты к низу, не скроллятся -----
+        footer = ttk.Frame(win, padding=(10, 10))
+        footer.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # ----- Notebook -----
+        nb = ttk.Notebook(win)
+        nb.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
+                padx=10, pady=(10, 0))
+
+        tab_ui = ttk.Frame(nb, padding=15)
+        tab_style = ttk.Frame(nb, padding=15)
+        tab_behavior = ttk.Frame(nb, padding=15)
+        nb.add(tab_ui, text=tr.t('settings.tab.interface'))
+        nb.add(tab_style, text=tr.t('settings.tab.style'))
+        nb.add(tab_behavior, text=tr.t('settings.tab.behavior'))
+
+        # ====================================================================
+        # ВКЛАДКА 1: ИНТЕРФЕЙС
+        # ====================================================================
+        ttk.Label(tab_ui, text=tr.t('settings.language'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W)
 
         label_to_code = {label: code for code, label in SUPPORTED_LANGS}
         code_to_label = {code: label for code, label in SUPPORTED_LANGS}
-
         current = self.settings.get('language', 'ru')
         if current not in code_to_label:
             current = 'en'
-
         lang_var = tk.StringVar(value=code_to_label[current])
-        ttk.Combobox(win, textvariable=lang_var,
+        ttk.Combobox(tab_ui, textvariable=lang_var,
                      values=[lbl for _, lbl in SUPPORTED_LANGS],
-                     state='readonly', width=30).pack(
-            anchor=tk.W, padx=10)
+                     state='readonly', width=30).pack(anchor=tk.W, pady=(2, 0))
 
-        # Тема
-        ttk.Label(win, text=tr.t('settings.theme'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-        theme_var = tk.StringVar(
-            value=self.settings.get('theme', 'light'))
-        ttk.Combobox(win, textvariable=theme_var,
+        ttk.Label(tab_ui, text=tr.t('settings.theme'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(20, 2))
+        theme_var = tk.StringVar(value=self.settings.get('theme', 'light'))
+        ttk.Combobox(tab_ui, textvariable=theme_var,
                      values=[k for k, _ in self._list_themes()],
-                     state='readonly', width=25).pack(
-            anchor=tk.W, padx=10)
+                     state='readonly', width=25).pack(anchor=tk.W)
 
-        # === Авто-тема по времени ===
-        ttk.Label(win, text=tr.t('settings.auto_theme'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-
+        ttk.Label(tab_ui, text=tr.t('settings.auto_theme'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(20, 2))
         if not hasattr(self, '_auto_theme_var'):
             self._auto_theme_var = tk.BooleanVar(
                 value=self.settings.get('auto_theme_by_time', False))
-        ttk.Checkbutton(win, text=tr.t('settings.auto_theme_by_time'),
+        ttk.Checkbutton(tab_ui, text=tr.t('settings.auto_theme_by_time'),
                         variable=self._auto_theme_var,
-                        command=self._toggle_auto_theme).pack(
-            anchor=tk.W, padx=10)
+                        command=self._toggle_auto_theme).pack(anchor=tk.W)
 
-        row_at = ttk.Frame(win)
-        row_at.pack(anchor=tk.W, padx=10, pady=(4, 0))
-        ttk.Label(row_at,
-                  text=tr.t('settings.theme_day_start')).pack(
-            side=tk.LEFT)
-        day_start_var = tk.IntVar(
-            value=self.settings.get('theme_day_start', 7))
+        row_at = ttk.Frame(tab_ui)
+        row_at.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Label(row_at, text=tr.t('settings.theme_day_start')).pack(side=tk.LEFT)
+        day_start_var = tk.IntVar(value=self.settings.get('theme_day_start', 7))
         ttk.Spinbox(row_at, from_=0, to=23,
-                    textvariable=day_start_var, width=4).pack(
-            side=tk.LEFT, padx=3)
-        ttk.Label(row_at,
-                  text=tr.t('settings.theme_day_end')).pack(
-            side=tk.LEFT)
-        day_end_var = tk.IntVar(
-            value=self.settings.get('theme_day_end', 19))
+                    textvariable=day_start_var, width=4).pack(side=tk.LEFT, padx=3)
+        ttk.Label(row_at, text=tr.t('settings.theme_day_end')).pack(side=tk.LEFT)
+        day_end_var = tk.IntVar(value=self.settings.get('theme_day_end', 19))
         ttk.Spinbox(row_at, from_=0, to=23,
-                    textvariable=day_end_var, width=4).pack(
-            side=tk.LEFT, padx=3)
+                    textvariable=day_end_var, width=4).pack(side=tk.LEFT, padx=3)
 
-        row_at2 = ttk.Frame(win)
-        row_at2.pack(anchor=tk.W, padx=10, pady=(4, 0))
-        ttk.Label(row_at2,
-                  text=tr.t('settings.theme_day')).pack(side=tk.LEFT)
-        theme_day_var = tk.StringVar(
-            value=self.settings.get('theme_day', 'light'))
+        row_at2 = ttk.Frame(tab_ui)
+        row_at2.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Label(row_at2, text=tr.t('settings.theme_day')).pack(side=tk.LEFT)
+        theme_day_var = tk.StringVar(value=self.settings.get('theme_day', 'light'))
         ttk.Combobox(row_at2, textvariable=theme_day_var, width=12,
                      state='readonly',
                      values=[k for k, _ in self._list_themes()]).pack(
             side=tk.LEFT, padx=3)
-        ttk.Label(row_at2,
-                  text=tr.t('settings.theme_night')).pack(
+        ttk.Label(row_at2, text=tr.t('settings.theme_night')).pack(
             side=tk.LEFT, padx=(10, 0))
         theme_night_var = tk.StringVar(
             value=self.settings.get('theme_night', 'dark'))
@@ -102,135 +105,140 @@ class DialogsUIMixin:
                      values=[k for k, _ in self._list_themes()]).pack(
             side=tk.LEFT, padx=3)
 
-        # === Горячие клавиши ===
-        ttk.Label(win, text=tr.t('hotkey.section'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-        ttk.Button(win, text=tr.t('hotkey.open_editor'),
-                   command=self._open_hotkey_editor).pack(
-            anchor=tk.W, padx=10)
-
-        # Сглаживание
-        ttk.Label(win, text=tr.t('settings.smooth'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-        smooth_var = tk.IntVar(value=self.settings['smooth_window'])
-        ttk.Label(win,
-                  text=tr.t('settings.smooth_window')).pack(
-            anchor=tk.W, padx=10)
-        ttk.Spinbox(win, from_=1, to=100,
-                    textvariable=smooth_var, width=10).pack(
-            anchor=tk.W, padx=10)
-
-        # Шрифты
-        ttk.Label(win, text=tr.t('settings.fonts'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-        font_family_var = tk.StringVar(
-            value=self.settings['font_family'])
-        ttk.Label(win,
-                  text=tr.t('settings.font_family')).pack(
-            anchor=tk.W, padx=10)
-        ttk.Combobox(win, textvariable=font_family_var,
-                     values=FONTS, width=25,
-                     state="readonly").pack(anchor=tk.W, padx=10)
-        font_vars = {}
-        for key, label_key in [
-            ('font_base', 'settings.font_base'),
-            ('font_title', 'settings.font_title'),
-            ('font_labels', 'settings.font_labels'),
-            ('font_legend', 'settings.font_legend'),
-            ('font_ticks', 'settings.font_ticks'),
-        ]:
-            ttk.Label(win, text=f"{tr.t(label_key)}:").pack(
-                anchor=tk.W, padx=10, pady=(5, 0))
-            var = tk.IntVar(value=self.settings[key])
-            font_vars[key] = var
-            ttk.Spinbox(win, from_=6, to=48,
-                        textvariable=var, width=8).pack(
-                anchor=tk.W, padx=10)
-
-        # Стиль
-        ttk.Label(win, text=tr.t('settings.style'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-        default_color_var = tk.StringVar(
-            value=self.settings['default_color'])
-        ttk.Label(win,
-                  text=tr.t('settings.default_color')).pack(
-            anchor=tk.W, padx=10)
-        ttk.Entry(win, textvariable=default_color_var,
-                  width=15).pack(anchor=tk.W, padx=10)
-        default_lw_var = tk.DoubleVar(
-            value=self.settings['default_lw'])
-        ttk.Label(win,
-                  text=tr.t('settings.default_lw')).pack(
-            anchor=tk.W, padx=10, pady=(5, 0))
-        ttk.Spinbox(win, from_=0.5, to=10, increment=0.5,
-                    textvariable=default_lw_var, width=8).pack(
-            anchor=tk.W, padx=10)
-        axis_lw_var = tk.DoubleVar(value=self.settings['axis_lw'])
-        ttk.Label(win,
-                  text=tr.t('settings.axis_lw')).pack(
-            anchor=tk.W, padx=10, pady=(5, 0))
-        ttk.Spinbox(win, from_=0.5, to=5, increment=0.5,
-                    textvariable=axis_lw_var, width=8).pack(
-            anchor=tk.W, padx=10)
-
-        # Обучение
-        ttk.Label(win, text=tr.t('settings.tour'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
+        ttk.Label(tab_ui, text=tr.t('settings.tour'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(20, 2))
         tour_var = tk.BooleanVar(
             value=self.settings.get('show_tour_on_start', False))
-        ttk.Checkbutton(win,
-                        text=tr.t('settings.tour_show_on_start'),
-                        variable=tour_var).pack(
-            anchor=tk.W, padx=10)
+        ttk.Checkbutton(tab_ui, text=tr.t('settings.tour_show_on_start'),
+                        variable=tour_var).pack(anchor=tk.W)
 
         def run_tour_now():
             win.destroy()
             self.root.after(100, self._start_onboarding)
 
-        ttk.Button(win, text=tr.t('settings.tour_run_now'),
-                   command=run_tour_now).pack(
-            anchor=tk.W, padx=10, pady=(5, 0))
+        ttk.Button(tab_ui, text=tr.t('settings.tour_run_now'),
+                   command=run_tour_now).pack(anchor=tk.W, pady=(5, 0))
 
-        ttk.Label(win, text=tr.t('menu.view.drag_points'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
-        ttk.Checkbutton(win, text=tr.t('menu.view.drag_points'),
-                        variable=self.drag_points_enabled).pack(
-            anchor=tk.W, padx=10)
+        # ====================================================================
+        # ВКЛАДКА 2: ШРИФТЫ И СТИЛЬ
+        # ====================================================================
+        ttk.Label(tab_style, text=tr.t('settings.fonts'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W)
 
-        # === Звуки ===
-        ttk.Label(win, text=tr.t('settings.sounds'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
+        row_ff = ttk.Frame(tab_style)
+        row_ff.pack(fill=tk.X, pady=(2, 8))
+        ttk.Label(row_ff, text=tr.t('settings.font_family')).pack(side=tk.LEFT)
+        font_family_var = tk.StringVar(value=self.settings['font_family'])
+        ttk.Combobox(row_ff, textvariable=font_family_var,
+                     values=FONTS, width=25,
+                     state="readonly").pack(side=tk.LEFT, padx=5)
+
+        # Размеры шрифтов — сеткой 2 колонки
+        grid_ff = ttk.Frame(tab_style)
+        grid_ff.pack(fill=tk.X, pady=(0, 10))
+        font_vars = {}
+        for i, (key, label_key) in enumerate([
+            ('font_base', 'settings.font_base'),
+            ('font_title', 'settings.font_title'),
+            ('font_labels', 'settings.font_labels'),
+            ('font_legend', 'settings.font_legend'),
+            ('font_ticks', 'settings.font_ticks'),
+        ]):
+            var = tk.IntVar(value=self.settings[key])
+            font_vars[key] = var
+            r, c = divmod(i, 2)
+            ttk.Label(grid_ff, text=f"{tr.t(label_key)}:").grid(
+                row=r, column=c * 2, sticky=tk.W, pady=2, padx=(0, 3))
+            ttk.Spinbox(grid_ff, from_=6, to=48,
+                        textvariable=var, width=6).grid(
+                row=r, column=c * 2 + 1, sticky=tk.W, padx=(0, 15))
+
+        ttk.Label(tab_style, text=tr.t('settings.style'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(10, 2))
+
+        row_color = ttk.Frame(tab_style)
+        row_color.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(row_color, text=tr.t('settings.default_color')).pack(
+            side=tk.LEFT)
+        default_color_var = tk.StringVar(value=self.settings['default_color'])
+        ttk.Entry(row_color, textvariable=default_color_var, width=12).pack(
+            side=tk.LEFT, padx=5)
+
+        def pick_default_color():
+            from tkinter import colorchooser
+            c = colorchooser.askcolor(initialcolor=default_color_var.get())
+            if c[1]:
+                default_color_var.set(c[1])
+
+        ttk.Button(row_color, text='…', width=3,
+                   command=pick_default_color).pack(side=tk.LEFT)
+
+        row_lw = ttk.Frame(tab_style)
+        row_lw.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(row_lw, text=tr.t('settings.default_lw')).pack(side=tk.LEFT)
+        default_lw_var = tk.DoubleVar(value=self.settings['default_lw'])
+        ttk.Spinbox(row_lw, from_=0.5, to=10, increment=0.5,
+                    textvariable=default_lw_var, width=6).pack(
+            side=tk.LEFT, padx=5)
+
+        row_axis = ttk.Frame(tab_style)
+        row_axis.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(row_axis, text=tr.t('settings.axis_lw')).pack(side=tk.LEFT)
+        axis_lw_var = tk.DoubleVar(value=self.settings['axis_lw'])
+        ttk.Spinbox(row_axis, from_=0.5, to=5, increment=0.5,
+                    textvariable=axis_lw_var, width=6).pack(
+            side=tk.LEFT, padx=5)
+
+        ttk.Label(tab_style, text=tr.t('settings.smooth'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(15, 2))
+        row_smooth = ttk.Frame(tab_style)
+        row_smooth.pack(fill=tk.X)
+        ttk.Label(row_smooth, text=tr.t('settings.smooth_window')).pack(
+            side=tk.LEFT)
+        smooth_var = tk.IntVar(value=self.settings['smooth_window'])
+        ttk.Spinbox(row_smooth, from_=1, to=100,
+                    textvariable=smooth_var, width=6).pack(side=tk.LEFT, padx=5)
+
+        # ====================================================================
+        # ВКЛАДКА 3: ПОВЕДЕНИЕ
+        # ====================================================================
+        ttk.Label(tab_behavior, text=tr.t('hotkey.section'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Button(tab_behavior, text=tr.t('hotkey.open_editor'),
+                   command=self._open_hotkey_editor).pack(
+            anchor=tk.W, pady=(2, 10))
+
+        ttk.Label(tab_behavior, text=tr.t('settings.editing'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(10, 2))
+        ttk.Checkbutton(tab_behavior, text=tr.t('menu.view.drag_points'),
+                        variable=self.drag_points_enabled).pack(anchor=tk.W)
+
+        ttk.Label(tab_behavior, text=tr.t('settings.sounds'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(15, 2))
         if not hasattr(self, '_sound_enabled_var'):
             self._sound_enabled_var = tk.BooleanVar(
                 value=self.settings.get('sounds_enabled', True))
-        ttk.Checkbutton(win, text=tr.t('settings.sounds_enabled'),
+        ttk.Checkbutton(tab_behavior, text=tr.t('settings.sounds_enabled'),
                         variable=self._sound_enabled_var,
                         command=lambda: self._toggle_click_sound(
-                            self._sound_enabled_var.get())).pack(
-            anchor=tk.W, padx=10)
+                            self._sound_enabled_var.get())).pack(anchor=tk.W)
 
-        ttk.Label(win, text=tr.t('settings.other'),
-                  font=('Arial', 10, 'bold')).pack(
-            anchor=tk.W, padx=10, pady=(15, 2))
+        ttk.Label(tab_behavior, text=tr.t('settings.other'),
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(15, 2))
+        row_undo = ttk.Frame(tab_behavior)
+        row_undo.pack(fill=tk.X)
+        ttk.Label(row_undo, text=tr.t('settings.max_undo')).pack(side=tk.LEFT)
         undo_var = tk.IntVar(value=self.max_undo)
-        ttk.Label(win,
-                  text=tr.t('settings.max_undo')).pack(
-            anchor=tk.W, padx=10)
-        ttk.Spinbox(win, from_=10, to=500,
-                    textvariable=undo_var, width=10).pack(
-            anchor=tk.W, padx=10)
+        ttk.Spinbox(row_undo, from_=10, to=500,
+                    textvariable=undo_var, width=8).pack(
+            side=tk.LEFT, padx=5)
 
+        # ====================================================================
+        # SAVE / RESET (идентичны прошлой версии)
+        # ====================================================================
         def do_reset():
             if not messagebox.askyesno(
-                    tr.t('msg.confirm'),
-                    tr.t('settings.reset_confirm')):
+                    tr.t('msg.confirm'), tr.t('settings.reset_confirm')):
                 return
             try:
                 from config import reset_config
@@ -241,18 +249,14 @@ class DialogsUIMixin:
                                      tr.t('settings.reset_error'))
                 return
             win.destroy()
-            messagebox.showinfo(tr.t('msg.info'),
-                                tr.t('settings.reset_done'))
+            messagebox.showinfo(tr.t('msg.info'), tr.t('settings.reset_done'))
 
         def save():
             new_lang = label_to_code.get(
-                lang_var.get(),
-                self.settings.get('language', 'ru'))
-            lang_changed = (new_lang !=
-                            self.settings.get('language', 'ru'))
+                lang_var.get(), self.settings.get('language', 'ru'))
+            lang_changed = (new_lang != self.settings.get('language', 'ru'))
             new_theme = theme_var.get()
-            theme_changed = (new_theme !=
-                             self.settings.get('theme', 'light'))
+            theme_changed = (new_theme != self.settings.get('theme', 'light'))
 
             self.settings['smooth_window'] = smooth_var.get()
             self.settings['font_family'] = font_family_var.get()
@@ -265,10 +269,7 @@ class DialogsUIMixin:
             self.settings['show_tour_on_start'] = tour_var.get()
             self.settings['theme'] = new_theme
             self.settings['language'] = new_lang
-
-            # === авто-тема ===
-            self.settings['auto_theme_by_time'] = bool(
-                self._auto_theme_var.get())
+            self.settings['auto_theme_by_time'] = bool(self._auto_theme_var.get())
             self.settings['theme_day_start'] = day_start_var.get()
             self.settings['theme_day_end'] = day_end_var.get()
             self.settings['theme_day'] = theme_day_var.get()
@@ -278,10 +279,8 @@ class DialogsUIMixin:
             self.lw_var.set(default_lw_var.get())
             self._apply_font_settings()
 
-            self.settings['sounds_enabled'] = bool(
-                self._sound_enabled_var.get())
-            self._toggle_click_sound(
-                self.settings['sounds_enabled'])
+            self.settings['sounds_enabled'] = bool(self._sound_enabled_var.get())
+            self._toggle_click_sound(self.settings['sounds_enabled'])
 
             win.destroy()
             self._show_history(tr.t('hist.settings_applied'))
@@ -290,12 +289,9 @@ class DialogsUIMixin:
                 self._apply_theme(new_theme)
                 self.theme_var.set(new_theme)
                 self._populate_theme_menu()
-
             if lang_changed:
                 self._switch_lang(new_lang)
 
-        footer = ttk.Frame(win, padding=(10, 15))
-        footer.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Button(footer, text=tr.t('settings.reset'),
                    command=do_reset).pack(side=tk.LEFT)
         ttk.Button(footer, text=tr.t('settings.save'),
