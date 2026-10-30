@@ -220,9 +220,14 @@ class BuildUIMixin:
         self._tr_label(tab_gen, 'gen.formula_hint',
                        foreground="gray", wraplength=400).pack(
             anchor=tk.W)
-        self.gen_expr = ttk.Entry(tab_gen)
-        self.gen_expr.pack(fill=tk.X, pady=5)
+
+        expr_row = ttk.Frame(tab_gen)
+        expr_row.pack(fill=tk.X, pady=5)
+        self.gen_expr = ttk.Entry(expr_row)
+        self.gen_expr.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.gen_expr.insert(0, "sin(x) * exp(-x/5)")
+        ttk.Button(expr_row, text="?", width=3,
+                   command=self._show_formula_help).pack(side=tk.RIGHT, padx=(5, 0))
 
         rf = ttk.Frame(tab_gen)
         rf.pack(fill=tk.X, pady=5)
@@ -432,6 +437,64 @@ class BuildUIMixin:
         self._tr_button_icon(peaks_frame, 'stats.find_peaks', 'search',
                              self._find_peaks).pack(fill=tk.X)
 
+        # ---------- Обработка сигналов ----------
+        smooth_frame = self._tr_labelframe(
+            tab_stats, 'stats.smoothing_title', padding=5)
+        smooth_frame.pack(fill=tk.X, pady=5)
+
+        # --- Савицкий-Голей ---
+        sg_row1 = ttk.Frame(smooth_frame)
+        sg_row1.pack(fill=tk.X, pady=2)
+        self._tr_label(sg_row1, 'stats.savgol_window').pack(side=tk.LEFT)
+        ttk.Spinbox(
+            sg_row1, from_=3, to=101, increment=2,
+            textvariable=self.savgol_window_var, width=5
+        ).pack(side=tk.LEFT, padx=5)
+        self._tr_label(sg_row1, 'stats.savgol_poly').pack(
+            side=tk.LEFT, padx=(10, 0))
+        ttk.Spinbox(
+            sg_row1, from_=1, to=6,
+            textvariable=self.savgol_poly_var, width=4
+        ).pack(side=tk.LEFT, padx=5)
+
+        self._tr_button_icon(
+            smooth_frame, 'stats.savgol_btn', 'smooth',
+            self._apply_savgol).pack(fill=tk.X, pady=(4, 2))
+
+        # --- Интерполяция ---
+        ip_row1 = ttk.Frame(smooth_frame)
+        ip_row1.pack(fill=tk.X, pady=(8, 2))
+        self._tr_label(ip_row1, 'stats.interp_method').pack(side=tk.LEFT)
+        ttk.Combobox(
+            ip_row1, textvariable=self.interp_method_var,
+            values=['linear', 'cubic', 'pchip'],
+            width=10, state='readonly'
+        ).pack(side=tk.LEFT, padx=5)
+        self._tr_label(ip_row1, 'stats.interp_points').pack(
+            side=tk.LEFT, padx=(10, 0))
+        ttk.Spinbox(
+            ip_row1, from_=50, to=5000, increment=50,
+            textvariable=self.interp_n_var, width=6
+        ).pack(side=tk.LEFT, padx=5)
+
+        self._tr_button_icon(
+            smooth_frame, 'stats.interp_btn', 'interp',
+            self._apply_interpolation).pack(fill=tk.X, pady=(4, 0))
+
+        # --- Производная / интеграл ---
+        calc_frame = self._tr_labelframe(
+            tab_stats, 'stats.calc_title', padding=5)
+        calc_frame.pack(fill=tk.X, pady=5)
+
+        row_di = ttk.Frame(calc_frame)
+        row_di.pack(fill=tk.X, pady=2)
+        self._tr_button_icon(row_di, 'stats.derivative_btn',
+                             'deriv', self._add_derivative).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        self._tr_button_icon(row_di, 'stats.integral_btn',
+                             'integr', self._add_integral).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+
         # ---------- Правая панель ----------
         right_frame = ttk.Frame(self.root, padding=5)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -502,9 +565,11 @@ class BuildUIMixin:
         self.frame_custom_anim = ttk.Frame(self.anim_labelframe)
         ttk.Label(self.frame_custom_anim,
                   text="y(x,t)/z(x,y,t):").pack(side=tk.LEFT)
-        self.entry_custom_anim = ttk.Entry(self.frame_custom_anim, width=25)
+        self.entry_custom_anim = ttk.Entry(self.frame_custom_anim, width=22)
         self.entry_custom_anim.pack(side=tk.LEFT, padx=5)
         self.entry_custom_anim.insert(0, "sin(x + t) * cos(t/2)")
+        ttk.Button(self.frame_custom_anim, text="?", width=3,
+                   command=self._show_formula_help).pack(side=tk.LEFT)
         baf = ttk.Frame(self.anim_labelframe)
         baf.pack(fill=tk.X)
         for key, icon, cmd in [
@@ -546,6 +611,12 @@ class BuildUIMixin:
                                  command=self._open_console)
         console_btn.pack(side=tk.RIGHT, padx=5, pady=1)
         attach_tooltip(console_btn, "Открыть Python-консоль (Ctrl+`)")
+
+        dsl_btn = ttk.Button(statusbar, text="⌨️ DSL", width=10,
+                             command=self._open_dsl_console)
+        dsl_btn.pack(side=tk.RIGHT, padx=5, pady=1)
+        attach_tooltip(dsl_btn, "Открыть DSL-консоль (Ctrl+Alt+C)")
+
         ttk.Label(statusbar, textvariable=self.perf_var,
                   anchor=tk.E, padding=(5, 2),
                   foreground="#888").pack(side=tk.RIGHT, padx=5)

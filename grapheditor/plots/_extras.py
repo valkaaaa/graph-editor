@@ -1,5 +1,5 @@
 """Операции с объектами: add/update/delete, list/redraw, type_change,
-тренды, аппроксимации, пики, статистика, undo/redo.
+тренды, аппроксимации, пики, обработка сигналов, undo/redo.
 """
 import numpy as np
 import tkinter as tk
@@ -11,7 +11,7 @@ from translator import tr
 class ExtrasMixin:
 
     # ========================================================================
-    # НОВЫЕ МЕТОДЫ (плагины)
+    # ПЛАГИНЫ
     # ========================================================================
     def _add_plugin_graph(self, t):
         """Создание объекта для плагинного типа."""
@@ -126,15 +126,7 @@ class ExtrasMixin:
         self.notebook.select(0)
 
     def _load_selected_to_form(self):
-        """Загружает выбранный объект дерева обратно в форму «Создание».
-
-        Обрабатывает:
-          - обычные типы (x/y/z/yerr, box_data, heatmap_data, yerr_matrix);
-          - плагинные типы — делегирует в _load_plugin_to_form;
-          - специальные поля — pie_labels/pie_colors/treemap_parents/dst_labels/
-            col_labels, а также «label в X» для Box/Violin/Strip/… и «parents в X»
-            для Сосульки (icicle).
-        """
+        """Загружает выбранный объект дерева обратно в форму «Создание»."""
         sel = self._get_selected_indices()
         if not sel:
             messagebox.showwarning(tr.t('msg.warning'),
@@ -144,7 +136,7 @@ class ExtrasMixin:
         data = self.graphs_data[sel[0]]
         t = data['type']
 
-        # ----- Плагинные типы — отдельная ветка -----
+        # ----- Плагинные типы -----
         if (hasattr(self, 'plugin_registry')
                 and t in self.plugin_registry.chart_types):
             self.type_var.set(tr.type_name(t))
@@ -183,16 +175,14 @@ class ExtrasMixin:
             rows = [" ".join(_fmt_num(v) for v in row) for row in matrix]
             entry.insert(0, " ; ".join(rows))
 
-        # ----- Специальные типы: переопределяем X под смысл -----
-        # Типы, у которых в entry_x лежат подписи групп (pie_labels)
         label_in_x = {
             "Box plot", "Violin",
             "Strip plot", "Ridge plot", "Raincloud plot",
             "Beanplot", "Swarm plot",
             "Cherry blossom plot", "Dot-and-whisker",
-            "Joyplot 3D",
+            "Joyplot 3D", "Dot plot", "Funnel chart",
+            "Пирамида", "Bump chart",
         }
-        # Типы, у которых в entry_z лежат рёбра (A-B; B-C)
         edges_in_z = {
             "Сетевой график", "Hive plot", "Arc diagram",
             "Дерево (tree diagram)", "Radial tree 3D", "Flow map",
@@ -201,12 +191,8 @@ class ExtrasMixin:
         if t in label_in_x and data.get('pie_labels'):
             fill_entry(self.entry_x, data['pie_labels'])
         elif t == "Alluvial diagram":
-            fill_entry(self.entry_x,
-                       [";".join([])] if False else
-                       data.get('dst_labels', []))
+            fill_entry(self.entry_x, data.get('dst_labels', []))
         elif t == "Choropleth":
-            fill_entry(self.entry_x, data.get('col_labels', []))
-        elif t == "Bump chart":
             fill_entry(self.entry_x, data.get('col_labels', []))
         elif t == "Pie of pie":
             fill_entry(self.entry_x, data.get('pie_labels', []))
@@ -218,7 +204,6 @@ class ExtrasMixin:
         else:
             fill_entry(self.entry_x, data.get('x', []))
 
-        # ----- Y: box_data имеет приоритет над плоским y -----
         if data.get('box_data'):
             groups_str = " ; ".join(
                 ", ".join(_fmt_num(v) for v in g)
@@ -229,7 +214,6 @@ class ExtrasMixin:
         else:
             fill_entry(self.entry_y, data.get('y', []))
 
-        # ----- Z: matrix (heatmap_data) > строка-формула > плоский список -----
         if data.get('heatmap_data'):
             fill_matrix(self.entry_z, data['heatmap_data'])
         elif isinstance(data.get('z'), str):
@@ -241,24 +225,20 @@ class ExtrasMixin:
         else:
             fill_entry(self.entry_z, data.get('z', []))
 
-        # ----- Yerr: matrix (stream plot) > плоский список -----
         if data.get('yerr_matrix'):
             fill_matrix(self.entry_yerr, data['yerr_matrix'])
         else:
             fill_entry(self.entry_yerr, data.get('yerr', []))
 
-        # ----- Pie labels / colors -----
         fill_entry(self.entry_pie, data.get('pie_labels', []))
         fill_entry(self.entry_pie_colors, data.get('pie_colors', []))
 
-        # ----- Treemap parents (отдельное поле, не entry_x) -----
         parents = data.get('treemap_parents', [])
         self.treemap_parents.delete(0, tk.END)
         if parents:
             self.treemap_parents.insert(
                 0, "; ".join(str(p) for p in parents))
 
-        # ----- Скалярные параметры -----
         try:
             self.bins_var.set(int(data.get('bins', 10)))
         except (TypeError, ValueError):
@@ -272,18 +252,15 @@ class ExtrasMixin:
         except (TypeError, ValueError):
             self.subplot_index_var.set(0)
 
-        # ----- Единицы -----
         self.unit_x_var.set(data.get('unit_x', '—') or '—')
         self.unit_y_var.set(data.get('unit_y', '—') or '—')
         self.unit_z_var.set(data.get('unit_z', '—') or '—')
 
-        # ----- Имя, заметки -----
         self.entry_label.delete(0, tk.END)
         self.entry_label.insert(0, data.get('label', ''))
         self.entry_notes.delete(0, tk.END)
         self.entry_notes.insert(0, data.get('notes', ''))
 
-        # ----- Стиль -----
         self.color_var.set(data.get('color', 'blue'))
         try:
             self.lw_var.set(float(data.get('lw', 2.0)))
@@ -296,7 +273,6 @@ class ExtrasMixin:
             self.ms_var.set(6.0)
         self.marker_var.set(data.get('marker', 'o'))
 
-        # ----- Переключиться на вкладку «Создание» -----
         try:
             self.notebook.select(0)
         except Exception:
@@ -372,7 +348,7 @@ class ExtrasMixin:
             self.frame_custom_anim.pack_forget()
 
     # ========================================================================
-    # СПИСОК ОБЪЕКТОВ (фильтр + иконка видимости)
+    # СПИСОК ОБЪЕКТОВ
     # ========================================================================
     def _update_listbox(self):
         tree = self.graph_tree
@@ -424,114 +400,8 @@ class ExtrasMixin:
                 parent = folder_nodes.get(folder, '')
                 tree.insert(parent, 'end', text=text, values=(i,))
 
-    def _refresh_stats(self):
-        """Обновляет вкладку «Статистика» по первому выбранному объекту.
-
-        Вызывается из _add_graph/_update_graph/_delete_graph/
-        _add_plugin_graph/_clear_all_silent/_switch_document/двойного клика
-        по дереву. Если выделения нет — все поля сбрасываются в «—».
-        """
-        # Защита: метод может быть вызван до того, как _build_ui
-        # создаст stats_vars (теоретически при раннем _refresh_stats).
-        if not hasattr(self, 'stats_vars'):
-            return
-
-        sel = self._get_selected_indices()
-
-        # Нет выделения — сброс
-        if not sel or not (0 <= sel[0] < len(self.graphs_data)):
-            if hasattr(self, 'stats_label'):
-                try:
-                    self.stats_label.config(
-                        text=tr.t('stats.none_selected'))
-                except Exception:
-                    pass
-            for v in self.stats_vars.values():
-                v.set('—')
-            if hasattr(self, 'fit_result_var'):
-                self.fit_result_var.set('')
-            return
-
-        data = self.graphs_data[sel[0]]
-
-        # Заголовок — имя + тип
-        if hasattr(self, 'stats_label'):
-            try:
-                self.stats_label.config(
-                    text=f"{data.get('label', '?')} — "
-                         f"{tr.type_name(data['type'])}")
-            except Exception:
-                pass
-
-        # Числовые значения берём из Y — самый универсальный источник
-        try:
-            arr = np.asarray(data.get('y', []), dtype=float)
-            arr = arr[np.isfinite(arr)]
-        except (TypeError, ValueError):
-            arr = np.array([])
-
-        if arr.size == 0:
-            for v in self.stats_vars.values():
-                v.set('—')
-            if hasattr(self, 'fit_result_var'):
-                self.fit_result_var.set('')
-            return
-
-        def _fmt(v):
-            try:
-                f = float(v)
-                if not np.isfinite(f):
-                    return '—'
-                return f"{f:.4g}"
-            except (TypeError, ValueError):
-                return '—'
-
-        try:
-            self.stats_vars['n'].set(str(int(arr.size)))
-            self.stats_vars['min'].set(_fmt(arr.min()))
-            self.stats_vars['max'].set(_fmt(arr.max()))
-            self.stats_vars['mean'].set(_fmt(arr.mean()))
-            self.stats_vars['median'].set(_fmt(np.median(arr)))
-
-            if arr.size > 1:
-                std = float(arr.std(ddof=1))
-                var = float(arr.var(ddof=1))
-            else:
-                std = var = 0.0
-            self.stats_vars['std'].set(_fmt(std))
-            self.stats_vars['var'].set(_fmt(var))
-
-            q1 = float(np.percentile(arr, 25))
-            q3 = float(np.percentile(arr, 75))
-            self.stats_vars['q1'].set(_fmt(q1))
-            self.stats_vars['q3'].set(_fmt(q3))
-            self.stats_vars['iqr'].set(_fmt(q3 - q1))
-            self.stats_vars['sum'].set(_fmt(arr.sum()))
-
-            # Корреляция Пирсона X↔Y (только если X — числа той же длины)
-            corr_text = '—'
-            try:
-                xarr = np.asarray(data.get('x', []), dtype=float)
-                n = min(xarr.size, arr.size)
-                if n >= 2:
-                    x_slice = xarr[:n]
-                    y_slice = arr[:n]
-                    x_ok = np.isfinite(x_slice)
-                    if x_ok.sum() >= 2:
-                        corr = float(np.corrcoef(
-                            x_slice[x_ok], y_slice[x_ok])[0, 1])
-                        if np.isfinite(corr):
-                            corr_text = _fmt(corr)
-            except (TypeError, ValueError):
-                pass
-            self.stats_vars['corr'].set(corr_text)
-        except Exception:
-            # Любая проблема с расчётом — не валим UI
-            for v in self.stats_vars.values():
-                v.set('—')
-
     # ========================================================================
-    # ПЕРЕРИСОВКА (perf + visible)
+    # ПЕРЕРИСОВКА
     # ========================================================================
     def _redraw(self):
         import time
@@ -579,6 +449,45 @@ class ExtrasMixin:
             except Exception:
                 pass
 
+    def _move_zorder(self, direction):
+        """Перемещение объекта по слоям (Z-order)."""
+        sel = self._get_selected_indices()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx < 0 or idx >= len(self.graphs_data):
+            return
+
+        self._snapshot("Перемещение слоя")
+        data = self.graphs_data.pop(idx)
+
+        if direction == 'front':
+            self.graphs_data.append(data)
+            new_idx = len(self.graphs_data) - 1
+        elif direction == 'back':
+            self.graphs_data.insert(0, data)
+            new_idx = 0
+        elif direction == 'up' and idx < len(self.graphs_data):
+            self.graphs_data.insert(idx + 1, data)
+            new_idx = idx + 1
+        elif direction == 'down' and idx > 0:
+            self.graphs_data.insert(idx - 1, data)
+            new_idx = idx - 1
+        else:
+            self.graphs_data.insert(idx, data)
+            return
+
+        self._update_listbox()
+        tree_items = self.graph_tree.get_children()
+        for item in tree_items:
+            if self.graph_tree.set(item, 'values') == (new_idx,):
+                self.graph_tree.selection_set(item)
+                break
+        self._redraw()
+
+    # ========================================================================
+    # СМЕНА ТИПА (ПОКАЗ ПОЛЕЙ)
+    # ========================================================================
     def _on_type_change(self, event=None):
         for fr in (self.frame_x, self.frame_y, self.frame_z,
                    self.frame_pie_labels, self.frame_pie_colors,
@@ -589,13 +498,11 @@ class ExtrasMixin:
         t = tr.find_type_by_display(self.type_var.get())
         self.hint_label.config(text="")
 
-        # ----- Plugin-типы -----
         if (hasattr(self, 'plugin_registry')
                 and t in self.plugin_registry.chart_types):
             self._show_plugin_fields(t)
             return
 
-        # --- 2D базовые и продвинутые ---
         if t in ("Круговая", "Кольцевая"):
             self.frame_y.pack(fill=tk.X)
             self.frame_pie_labels.pack(fill=tk.X)
@@ -660,8 +567,6 @@ class ExtrasMixin:
         elif t == "Полигон":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
-
-        # --- Финансовые и проектные ---
         elif t == "Водопад":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -700,8 +605,6 @@ class ExtrasMixin:
             self.frame_bins.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.pnf_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Статистические ---
         elif t == "Q-Q plot":
             self.frame_y.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.qq_hint'))
@@ -765,8 +668,6 @@ class ExtrasMixin:
             self.frame_z.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.phase_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Сетевые ---
         elif t == "Arc diagram":
             self.frame_z.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.arc_hint'))
@@ -830,8 +731,6 @@ class ExtrasMixin:
             self.frame_bins.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.mapper_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Векторные поля ---
         elif t in ("Stream plot", "Streamlines"):
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -844,8 +743,6 @@ class ExtrasMixin:
                           if t == "Stream plot"
                           else 'create.streamlines_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Радиотехника ---
         elif t == "Bode plot":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -876,8 +773,6 @@ class ExtrasMixin:
             self.frame_z.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.constellation_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- 3D-расширенные ---
         elif t == "Ribbon plot 3D":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -909,8 +804,6 @@ class ExtrasMixin:
             self.frame_bins.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.isosurface3d_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Гео / метео ---
         elif t == "Choropleth":
             self.frame_x.pack(fill=tk.X)
             self.frame_z.pack(fill=tk.X)
@@ -977,8 +870,6 @@ class ExtrasMixin:
             self.frame_bins.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.alphashape_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- ML ---
         elif t == "Volcano plot":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -1002,8 +893,6 @@ class ExtrasMixin:
             self.frame_fill.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.maplot_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Сравнение / ранги ---
         elif t == "Dot plot":
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -1108,8 +997,6 @@ class ExtrasMixin:
             self.frame_bins.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.gauge_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- Box / Violin / Heatmap / Treemap ---
         elif t in ("Box plot", "Violin"):
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -1123,8 +1010,6 @@ class ExtrasMixin:
             self.frame_y.pack(fill=tk.X)
             self.frame_pie_labels.pack(fill=tk.X)
             self.frame_treemap.pack(fill=tk.X)
-
-        # --- 9 НОВЫХ ТИПОВ ---
         elif t == "Вафельная диаграмма":
             self.frame_y.pack(fill=tk.X)
             self.frame_pie_labels.pack(fill=tk.X)
@@ -1181,8 +1066,6 @@ class ExtrasMixin:
             self.frame_bins.pack(fill=tk.X)
             self.hint_label.config(text=tr.t('create.wavelet_hint'))
             self.frame_hint.pack(fill=tk.X)
-
-        # --- 3D и остальное ---
         elif "3D" in t:
             self.frame_x.pack(fill=tk.X)
             self.frame_y.pack(fill=tk.X)
@@ -1202,11 +1085,14 @@ class ExtrasMixin:
             if t == "Точечная":
                 self.frame_glow.pack(fill=tk.X)
 
+    # ========================================================================
+    # ДОБАВЛЕНИЕ / ОБНОВЛЕНИЕ ОБЪЕКТА
+    # ========================================================================
     def _add_graph(self):
         t = tr.find_type_by_display(self.type_var.get())
         self._ensure_projection(self._projection_for_type(t))
 
-        # ----- Plugin-типы: отдельная обработка -----
+        # ----- Плагинные типы -----
         if (hasattr(self, 'plugin_registry')
                 and t in self.plugin_registry.chart_types):
             return self._add_plugin_graph(t)
@@ -1412,7 +1298,6 @@ class ExtrasMixin:
                                      tr.t('msg.xy_length'))
                 return
 
-        # --- Финансовые и проектные ---
         elif t == "Водопад":
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
@@ -1502,7 +1387,6 @@ class ExtrasMixin:
                 return
             x_data = list(range(len(y_data)))
 
-        # --- Статистические ---
         elif t in ("Q-Q plot", "ECDF", "Poincaré plot"):
             y_data = self._parse_data(self.entry_y.get())
             if not y_data or len(y_data) < 3:
@@ -1636,7 +1520,6 @@ class ExtrasMixin:
             z_data = self.entry_z.get().strip() or ''
 
         # --- Сетевые и иерархические ---
-        # --- Сетевые и иерархические ---
         elif t in ("Arc diagram", "Hive plot", "Дерево (tree diagram)",
                    "Radial tree 3D", "Сетевой график"):
             z_data = [s.strip()
@@ -1649,27 +1532,7 @@ class ExtrasMixin:
             x_data = list(range(len(z_data)))
             y_data = list(range(len(z_data)))
 
-        elif t == "Дендрограмма":
-            heatmap_data = []
-            for r in self.entry_z.get().split(';'):
-                vals = self._parse_data(r)
-                if vals:
-                    heatmap_data.append(vals)
-            if len(heatmap_data) < 2:
-                messagebox.showerror(tr.t('msg.error'),
-                                     tr.t('create.dendrogram_hint'))
-                return
-            if len(set(len(r) for r in heatmap_data)) != 1:
-                messagebox.showerror(tr.t('msg.error'),
-                                     tr.t('create.dendrogram_hint'))
-                return
-            pie_labels = [l.strip()
-                          for l in self.entry_pie.get().split(',')
-                          if l.strip()]
-            x_data = list(range(len(heatmap_data)))
-            y_data = heatmap_data[0] if heatmap_data else []
-
-        elif t == "Cluster dendrogram":
+        elif t in ("Дендрограмма", "Cluster dendrogram"):
             heatmap_data = []
             for r in self.entry_z.get().split(';'):
                 vals = self._parse_data(r)
@@ -1678,12 +1541,16 @@ class ExtrasMixin:
             if len(heatmap_data) < 2:
                 messagebox.showerror(
                     tr.t('msg.error'),
-                    tr.t('create.clusterdendro_hint'))
+                    tr.t('create.dendrogram_hint'
+                         if t == "Дендрограмма"
+                         else tr.t('create.clusterdendro_hint')))
                 return
             if len(set(len(r) for r in heatmap_data)) != 1:
                 messagebox.showerror(
                     tr.t('msg.error'),
-                    tr.t('create.clusterdendro_hint'))
+                    tr.t('create.dendrogram_hint'
+                         if t == "Дендрограмма"
+                         else tr.t('create.clusterdendro_hint')))
                 return
             pie_labels = [l.strip()
                           for l in self.entry_pie.get().split(',')
@@ -2145,7 +2012,6 @@ class ExtrasMixin:
             y_data = y_data[:n]
             z_data = z_data[:n]
 
-        # --- ML / статистика-2 ---
         elif t == "Volcano plot":
             x_data = self._parse_data(self.entry_x.get())
             y_data = self._parse_data(self.entry_y.get())
@@ -2192,7 +2058,6 @@ class ExtrasMixin:
             else:
                 z_data = [1.0] * n
 
-        # --- Сравнение / ранги ---
         elif t == "Bump chart":
             heatmap_data = []
             for r in self.entry_z.get().split(';'):
@@ -2425,7 +2290,6 @@ class ExtrasMixin:
             elif len(x_data) == 1:
                 x_data = [0.0, x_data[0]]
 
-        # --- Старые группы (Box, Violin, Heatmap, Treemap) ---
         elif t in ("Box plot", "Violin"):
             box_data = [self._parse_data(g) or []
                         for g in self.entry_y.get().split(';')
@@ -2466,7 +2330,6 @@ class ExtrasMixin:
             while len(treemap_parents) < len(y_data):
                 treemap_parents.append('')
 
-        # --- 9 НОВЫХ ТИПОВ ---
         elif t == "Вафельная диаграмма":
             y_data = self._parse_data(self.entry_y.get())
             if not y_data:
@@ -2679,7 +2542,6 @@ class ExtrasMixin:
             unit_y=self.unit_y_var.get(),
             unit_z=self.unit_z_var.get(),
         )
-        # Доп. поля для новых типов
         if t == "Choropleth":
             d['col_labels'] = col_labels
         if t == "Flow map":
@@ -2697,6 +2559,9 @@ class ExtrasMixin:
         self._redraw()
         self._refresh_stats()
 
+    # ========================================================================
+    # ОБНОВЛЕНИЕ СУЩЕСТВУЮЩЕГО ОБЪЕКТА
+    # ========================================================================
     def _update_graph(self):
         sel = self._get_selected_indices()
         if not sel:
@@ -2712,7 +2577,7 @@ class ExtrasMixin:
         self._ensure_projection(self._projection_for_type(t))
         self._snapshot(tr.t('hist.changed_graph', name=data['label']))
 
-        # ----- Plugin-типы -----
+        # ----- Плагинные типы -----
         if (hasattr(self, 'plugin_registry')
                 and t in self.plugin_registry.chart_types):
             x_new = self._parse_data(self.entry_x.get()) or []
@@ -2752,6 +2617,9 @@ class ExtrasMixin:
             return
 
         # --- Разбор данных по семействам ---
+        # (Логика полностью повторяет _add_graph, но пишет в data[...])
+        # Для краткости оставлены наиболее частые ветки + fallback.
+
         if t in ("Полярный scatter", "3D Полигон",
                  "3D Триангуляция", "Пузырьковая"):
             data['x'] = self._parse_data(self.entry_x.get()) or []
@@ -2859,7 +2727,6 @@ class ExtrasMixin:
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
 
-        # --- Финансовые ---
         elif t == "Свечи (OHLC)":
             data['x'] = self._parse_data(self.entry_x.get()) or []
             box_data = [self._parse_data(g) or []
@@ -2889,7 +2756,6 @@ class ExtrasMixin:
             data['y'] = self._parse_data(self.entry_y.get()) or []
             data['x'] = list(range(len(data['y'])))
 
-        # --- Статистические ---
         elif t in ("Q-Q plot", "ECDF", "Poincaré plot"):
             data['y'] = self._parse_data(self.entry_y.get()) or []
             data['x'] = list(range(len(data['y'])))
@@ -2972,7 +2838,6 @@ class ExtrasMixin:
                 data['x'] = list(range(len(data['y'])))
             data['z'] = self.entry_z.get().strip()
 
-        # --- Сетевые ---
         elif t in ("Arc diagram", "Hive plot", "Дерево (tree diagram)",
                    "Radial tree 3D", "Сетевой график"):
             z_new = [s.strip()
@@ -2982,21 +2847,7 @@ class ExtrasMixin:
             data['x'] = list(range(len(z_new)))
             data['y'] = list(range(len(z_new)))
 
-        elif t == "Дендрограмма":
-            hm = []
-            for r in self.entry_z.get().split(';'):
-                vals = self._parse_data(r)
-                if vals:
-                    hm.append(vals)
-            data['heatmap_data'] = hm
-            data['pie_labels'] = [l.strip()
-                                  for l in
-                                  self.entry_pie.get().split(',')
-                                  if l.strip()]
-            data['x'] = list(range(len(hm)))
-            data['y'] = hm[0] if hm else []
-
-        elif t == "Cluster dendrogram":
+        elif t in ("Дендрограмма", "Cluster dendrogram"):
             hm = []
             for r in self.entry_z.get().split(';'):
                 vals = self._parse_data(r)
@@ -3100,7 +2951,6 @@ class ExtrasMixin:
             data['x'] = list(range(len(hm[0]) if hm else 0))
             data['y'] = list(range(len(hm)))
 
-        # --- Векторные поля ---
         elif t in ("Stream plot", "Streamlines"):
             x_new = self._parse_data(self.entry_x.get()) or []
             y_new = self._parse_data(self.entry_y.get()) or []
@@ -3125,7 +2975,6 @@ class ExtrasMixin:
             data['heatmap_data'] = hm
             data['yerr_matrix'] = vm
 
-        # --- Радиотехника ---
         elif t == "Bode plot":
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
@@ -3161,7 +3010,6 @@ class ExtrasMixin:
                 data['y'] = y_new
                 data['heatmap_data'] = []
 
-        # --- 3D-расширенные ---
         elif t == "Ribbon plot 3D":
             x_new = self._parse_data(self.entry_x.get()) or []
             y_new = self._parse_data(self.entry_y.get()) or []
@@ -3220,7 +3068,6 @@ class ExtrasMixin:
             data['x'] = list(range(len(hm[0]) if hm else 0))
             data['y'] = list(range(len(hm)))
 
-        # --- Гео / метео ---
         elif t == "Choropleth":
             hm = []
             for r in self.entry_z.get().split(';'):
@@ -3306,7 +3153,6 @@ class ExtrasMixin:
             data['y'] = y_new[:n]
             data['z'] = z_new[:n]
 
-        # --- ML ---
         elif t == "Volcano plot":
             data['x'] = self._parse_data(self.entry_x.get()) or []
             data['y'] = self._parse_data(self.entry_y.get()) or []
@@ -3329,7 +3175,6 @@ class ExtrasMixin:
             else:
                 data['z'] = [1.0] * n
 
-        # --- Сравнение / ранги ---
         elif t == "Bump chart":
             hm = []
             for r in self.entry_z.get().split(';'):
@@ -3501,7 +3346,6 @@ class ExtrasMixin:
                 x_new = [0.0, x_new[0]]
             data['x'] = x_new
 
-        # --- Box / Violin / Heatmap / Treemap ---
         elif t in ("Box plot", "Violin"):
             box_data = [self._parse_data(g) or []
                         for g in self.entry_y.get().split(';')
@@ -3534,7 +3378,6 @@ class ExtrasMixin:
                                        for p in
                                        self.treemap_parents.get().split(';')]
 
-        # --- 9 новых типов ---
         elif t == "Вафельная диаграмма":
             data['y'] = self._parse_data(self.entry_y.get()) or []
             data['x'] = list(range(len(data['y'])))
@@ -3629,7 +3472,6 @@ class ExtrasMixin:
             data['x'] = x_new
             data['z'] = self.entry_z.get().strip() or 'cmor1.5-1.0'
 
-        # --- Обычные (Линия, Точечная, 3D и пр.) ---
         else:
             no_yerr = ("Круговая", "3D Линия", "3D Точечная",
                        "3D Столбчатая", "3D Гистограмма",
@@ -3674,6 +3516,9 @@ class ExtrasMixin:
         self._redraw()
         self._refresh_stats()
 
+    # ========================================================================
+    # АППРОКСИМАЦИИ
+    # ========================================================================
     def _add_fit(self, kind):
         sel = self._get_selected_indices()
         if not sel:
@@ -3681,8 +3526,6 @@ class ExtrasMixin:
                                    tr.t('msg.select_object_short'))
             return
         data = self.graphs_data[sel[0]]
-
-        # Универсальная проверка: подходят ли данные для fit'а
         try:
             x = np.asarray(data.get('x', []), dtype=float)
             y = np.asarray(data.get('y', []), dtype=float)
@@ -3701,7 +3544,6 @@ class ExtrasMixin:
             messagebox.showerror(tr.t('msg.error'),
                                  tr.t('msg.trend_only_2d'))
             return
-
         try:
             if kind == 'linear':
                 coeffs = np.polyfit(x, y, 1)
@@ -3743,7 +3585,6 @@ class ExtrasMixin:
                          f"·x^{coeffs[0]:.3f}")
             else:
                 return
-
             valid = np.isfinite(y_fit)
             if valid.sum() > 0:
                 residuals = y[valid] - y_fit[valid]
@@ -3755,7 +3596,6 @@ class ExtrasMixin:
                     f"{title}\n"
                     f"{tr.t('stats.fit_r2')} {r2:.4f}   "
                     f"{tr.t('stats.fit_rmse')} {rmse:.4g}")
-
             self._snapshot(tr.t('hist.added_graph', name=title))
             self.line_counter += 1
             td = self._default_data(
@@ -3774,7 +3614,6 @@ class ExtrasMixin:
         if not sel:
             return
         data = self.graphs_data[sel[0]]
-
         try:
             x = np.asarray(data.get('x', []), dtype=float)
             y = np.asarray(data.get('y', []), dtype=float)
@@ -3803,7 +3642,7 @@ class ExtrasMixin:
                 p = deg - i
                 eq_parts.append(f"{c:.3g}" if p == 0
                                 else f"{c:.3g}x" if p == 1
-                else f"{c:.3g}x^{p}")
+                                else f"{c:.3g}x^{p}")
             title = " + ".join(eq_parts).replace("+ -", "- ")
             self.fit_result_var.set(
                 f"{title}\n"
@@ -3854,6 +3693,252 @@ class ExtrasMixin:
         messagebox.showinfo(tr.t('msg.done'),
                             tr.t('stats.peaks_found', count=len(peaks)))
 
+    # ========================================================================
+    # ОБРАБОТКА СИГНАЛОВ: SG, ИНТЕРПОЛЯЦИЯ, ПРОИЗВОДНЫЕ
+    # ========================================================================
+    def _apply_savgol(self):
+        sel = self._get_selected_indices()
+        if not sel:
+            messagebox.showwarning(
+                tr.t('msg.warning'), tr.t('msg.select_object_short'))
+            return
+        try:
+            from scipy.signal import savgol_filter
+        except ImportError:
+            messagebox.showerror(tr.t('msg.error'),
+                                 "Требуется scipy:\n  pip install scipy")
+            return
+        data = self.graphs_data[sel[0]]
+        try:
+            y = np.array(data.get('y', []), dtype=float)
+        except (TypeError, ValueError):
+            messagebox.showerror(tr.t('msg.error'),
+                                 tr.t('msg.trend_only_2d'))
+            return
+        y = y[np.isfinite(y)]
+        if len(y) < 5:
+            messagebox.showerror(
+                tr.t('msg.error'),
+                "Нужно минимум 5 точек для фильтра Савицкого-Голея.")
+            return
+
+        window = self.savgol_window_var.get()
+        polyorder = self.savgol_poly_var.get()
+        if window % 2 == 0:
+            window += 1
+        if window > len(y):
+            window = len(y) if len(y) % 2 == 1 else len(y) - 1
+        if window <= polyorder:
+            window = polyorder + 1 if (polyorder + 1) % 2 == 1 else polyorder + 2
+        if window > len(y):
+            messagebox.showerror(
+                tr.t('msg.error'),
+                f"Окно ({window}) больше числа точек ({len(y)}).")
+            return
+
+        try:
+            y_smooth = savgol_filter(y, window_length=window,
+                                     polyorder=polyorder)
+        except Exception as e:
+            messagebox.showerror(tr.t('msg.error'),
+                                 f"Ошибка фильтра:\n{e}")
+            return
+
+        x = np.array(data.get('x', []), dtype=float)
+        if len(x) != len(y):
+            x = np.arange(len(y))
+
+        self._snapshot(
+            f"SG-фильтр (окно={window}, порядок={polyorder})")
+        self.line_counter += 1
+        td = self._default_data(
+            'Линия', x.tolist(), y_smooth.tolist(),
+            label=f"{data['label']} (SG w={window}, p={polyorder})",
+            color='red', ls='-', lw=2,
+            subplot_index=data.get('subplot_index', 0))
+        td['artist'] = self._create_artist(td)
+        self.graphs_data.append(td)
+        self._update_listbox()
+        self._redraw()
+        self._show_history(
+            tr.t('hist.savgol_applied', window=window, order=polyorder))
+
+    def _apply_interpolation(self):
+        sel = self._get_selected_indices()
+        if not sel:
+            messagebox.showwarning(
+                tr.t('msg.warning'), tr.t('msg.select_object_short'))
+            return
+        try:
+            from scipy.interpolate import (
+                interp1d, make_interp_spline, PchipInterpolator,
+            )
+        except ImportError:
+            messagebox.showerror(tr.t('msg.error'),
+                                 "Требуется scipy:\n  pip install scipy")
+            return
+        data = self.graphs_data[sel[0]]
+        try:
+            x = np.array(data.get('x', []), dtype=float)
+            y = np.array(data.get('y', []), dtype=float)
+        except (TypeError, ValueError):
+            messagebox.showerror(tr.t('msg.error'),
+                                 tr.t('msg.trend_only_2d'))
+            return
+        mask = np.isfinite(x) & np.isfinite(y)
+        x, y = x[mask], y[mask]
+        if len(x) < 3:
+            messagebox.showerror(tr.t('msg.error'),
+                                 "Нужно минимум 3 валидные точки.")
+            return
+        order = np.argsort(x)
+        x, y = x[order], y[order]
+
+        uniq_x, indices = np.unique(x, return_inverse=True)
+        if len(uniq_x) < len(x):
+            uniq_y = np.zeros(len(uniq_x))
+            for i, idx in enumerate(indices):
+                uniq_y[idx] += y[i]
+            counts = np.bincount(indices)
+            uniq_y /= counts
+            x, y = uniq_x, uniq_y
+        if len(x) < 3:
+            messagebox.showerror(tr.t('msg.error'),
+                                 "После удаления дубликатов X < 3 точек.")
+            return
+
+        method = self.interp_method_var.get()
+        n_points = self.interp_n_var.get()
+        n_points = max(len(x), min(5000, n_points))
+        x_new = np.linspace(x.min(), x.max(), n_points)
+
+        try:
+            if method == 'linear':
+                interp = interp1d(x, y, kind='linear', bounds_error=False)
+                y_new = interp(x_new)
+                method_name = 'linear'
+            elif method == 'pchip':
+                interp = PchipInterpolator(x, y)
+                y_new = interp(x_new)
+                method_name = 'PCHIP'
+            else:
+                k = min(3, len(x) - 1)
+                interp = make_interp_spline(x, y, k=k)
+                y_new = interp(x_new)
+                method_name = f'cubic k={k}'
+        except Exception as e:
+            messagebox.showerror(tr.t('msg.error'),
+                                 f"Ошибка интерполяции:\n{e}")
+            return
+
+        self._snapshot(f"Интерполяция ({method_name})")
+        self.line_counter += 1
+        td = self._default_data(
+            'Линия', x_new.tolist(), y_new.tolist(),
+            label=f"{data['label']} ({method_name})",
+            color='orange', ls='-', lw=2,
+            subplot_index=data.get('subplot_index', 0))
+        td['artist'] = self._create_artist(td)
+        self.graphs_data.append(td)
+        self._update_listbox()
+        self._redraw()
+        self._show_history(tr.t('hist.interp_applied', method=method_name))
+
+    def _add_derivative(self):
+        sel = self._get_selected_indices()
+        if not sel:
+            messagebox.showwarning(tr.t('msg.warning'),
+                                   tr.t('msg.select_object_short'))
+            return
+        data = self.graphs_data[sel[0]]
+        try:
+            y = np.array(data.get('y', []), dtype=float)
+            x = np.array(data.get('x', []), dtype=float)
+        except (TypeError, ValueError):
+            messagebox.showerror(tr.t('msg.error'),
+                                 tr.t('msg.trend_only_2d'))
+            return
+        mask = np.isfinite(y)
+        if mask.sum() < 3:
+            messagebox.showerror(tr.t('msg.error'),
+                                 "Нужно минимум 3 валидные точки.")
+            return
+        y = y[mask]
+        x = x[mask] if len(x) == len(mask) else np.arange(len(y))
+        order = np.argsort(x)
+        x, y = x[order], y[order]
+
+        if len(x) == len(y):
+            try:
+                dy = np.gradient(y, x)
+            except Exception:
+                dy = np.gradient(y)
+        else:
+            dy = np.gradient(y)
+
+        self._snapshot("Производная dy/dx")
+        self.line_counter += 1
+        td = self._default_data(
+            'Линия', x.tolist(), dy.tolist(),
+            label=f"d({data['label']})/dx",
+            color='purple', ls='-', lw=2,
+            subplot_index=data.get('subplot_index', 0))
+        td['artist'] = self._create_artist(td)
+        self.graphs_data.append(td)
+        self._update_listbox()
+        self._redraw()
+        self._show_history(f"Производная: {data['label']}")
+
+    def _add_integral(self):
+        sel = self._get_selected_indices()
+        if not sel:
+            messagebox.showwarning(tr.t('msg.warning'),
+                                   tr.t('msg.select_object_short'))
+            return
+        data = self.graphs_data[sel[0]]
+        try:
+            y = np.array(data.get('y', []), dtype=float)
+            x = np.array(data.get('x', []), dtype=float)
+        except (TypeError, ValueError):
+            messagebox.showerror(tr.t('msg.error'),
+                                 tr.t('msg.trend_only_2d'))
+            return
+        mask = np.isfinite(y)
+        if mask.sum() < 2:
+            messagebox.showerror(tr.t('msg.error'),
+                                 "Нужно минимум 2 валидные точки.")
+            return
+        y = y[mask]
+        x = x[mask] if len(x) == len(mask) else np.arange(len(y))
+        order = np.argsort(x)
+        x, y = x[order], y[order]
+
+        try:
+            from scipy.integrate import cumulative_trapezoid
+            integral = cumulative_trapezoid(y, x, initial=0)
+        except ImportError:
+            dx = np.diff(x)
+            integral = np.concatenate([[0], np.cumsum(
+                (y[:-1] + y[1:]) / 2 * dx)])
+
+        total = float(integral[-1]) if len(integral) else 0.0
+
+        self._snapshot(f"Интеграл ∫y dx = {total:.4g}")
+        self.line_counter += 1
+        td = self._default_data(
+            'Линия', x.tolist(), integral.tolist(),
+            label=f"∫ {data['label']} dx (≈{total:.4g})",
+            color='#2ecc71', ls='-', lw=2,
+            subplot_index=data.get('subplot_index', 0))
+        td['artist'] = self._create_artist(td)
+        self.graphs_data.append(td)
+        self._update_listbox()
+        self._redraw()
+        self._show_history(f"Интеграл ∫y dx ≈ {total:.4g}")
+
+    # ========================================================================
+    # UNDO / REDO
+    # ========================================================================
     def _snapshot(self, description=""):
         try:
             self._mark_modified()
@@ -3919,7 +4004,6 @@ class ExtrasMixin:
     def _restore_snapshot(self, snap):
         self._stop_animation()
 
-        # Backward-compat: старый формат — просто список графов
         if isinstance(snap, dict):
             graphs_snap = snap.get('graphs', [])
             folders_snap = snap.get('folders')
@@ -3931,7 +4015,6 @@ class ExtrasMixin:
             rows_snap = None
             cols_snap = None
 
-        # Восстанавливаем сетку subplot'ов, если снапшот её хранит
         if rows_snap is not None and cols_snap is not None:
             self.subplot_rows = int(rows_snap)
             self.subplot_cols = int(cols_snap)
@@ -3955,7 +4038,8 @@ class ExtrasMixin:
         needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter",
                                         "Полярная теплокарта",
                                         "Роза ветров",
-                                        "Диаграмма Тейлора")
+                                        "Диаграмма Тейлора",
+                                        "Sunburst", "Radar chart")
                           for d in graphs_snap)
         proj_kw = {}
         if needs_3d:
@@ -3976,7 +4060,6 @@ class ExtrasMixin:
         self._apply_grid_to_axes(self.axes)
         self.graphs_data = []
 
-        # Папки: из снапшота, если есть; иначе — минимум
         if folders_snap is not None:
             self.folders = list(folders_snap) or [""]
         else:

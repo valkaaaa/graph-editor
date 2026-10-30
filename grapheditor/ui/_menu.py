@@ -3,7 +3,7 @@
 Содержит:
   - _build_menu — полное меню приложения
   - _populate_theme_menu, _delete_theme, _open_theme_editor
-  - _open_plugins_folder, _reload_plugins, _show_plugins_list
+  - _open_plugins_folder, _reload_plugins
 """
 import os
 import sys
@@ -30,9 +30,10 @@ class MenuUIMixin:
         self.menubar = Menu(self.root)
         self.root.config(menu=self.menubar)
 
-        # Файл
+        # ---------------- Файл ----------------
         self.filemenu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=tr.t('menu.file'), menu=self.filemenu)
+
         self.filemenu.add_command(label=tr.t('menu.file.open_json'),
                                   accelerator="Ctrl+O", command=self._load_json)
         self.filemenu.add_command(label=tr.t('menu.file.save_json'),
@@ -66,14 +67,24 @@ class MenuUIMixin:
         self.filemenu.add_command(label=tr.t('menu.file.export_python'),
                                   command=self.export_python_code)
         self.filemenu.add_separator()
+
+        # === Консоли ===
         self.filemenu.add_command(label=tr.t('menu.file.console'),
                                   accelerator="Ctrl+`",
                                   command=self._open_console)
+        self.filemenu.add_command(label="DSL-консоль",
+                                  accelerator="Ctrl+Alt+C",
+                                  command=self._open_dsl_console)
+        self.filemenu.add_command(label="DSL-справочник",
+                                  command=self._show_dsl_help)
+
+        self.filemenu.add_separator()
         self.filemenu.add_command(label=tr.t('menu.file.tour'),
                                   command=self._start_onboarding)
         self.filemenu.add_separator()
         self.filemenu.add_command(label=tr.t('menu.file.settings'),
                                   command=self._open_settings)
+
         # === НЕДАВНИЕ ФАЙЛЫ ===
         self.filemenu.add_separator()
         self.recent_menu = Menu(self.filemenu, tearoff=0)
@@ -81,7 +92,7 @@ class MenuUIMixin:
                                   menu=self.recent_menu)
         self._rebuild_recent_menu()
 
-        # Правка
+        # ---------------- Правка ----------------
         self.editmenu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=tr.t('menu.edit'), menu=self.editmenu)
         self.editmenu.add_command(label=tr.t('menu.edit.undo'),
@@ -95,6 +106,7 @@ class MenuUIMixin:
         self.editmenu.add_command(label=tr.t('menu.edit.notes'),
                                   command=self._edit_notes)
         self.editmenu.add_separator()
+
         # === ПАЛИТРА ===
         palette_menu = Menu(self.editmenu, tearoff=0)
         try:
@@ -110,11 +122,15 @@ class MenuUIMixin:
         self.editmenu.add_command(
             label=tr.t('menu.edit.palette_dialog'),
             command=self._show_palette_dialog)
+
+        self.editmenu.add_separator()
+        self.editmenu.add_command(label="Справочник формул",
+                                  command=self._show_formula_help)
         self.editmenu.add_separator()
         self.editmenu.add_command(label=tr.t('menu.edit.clear_all'),
                                   command=self._clear_all)
 
-        # Шаблоны
+        # ---------------- Шаблоны ----------------
         self.templatemenu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=tr.t('menu.templates'),
                                  menu=self.templatemenu)
@@ -147,6 +163,7 @@ class MenuUIMixin:
         self.templatemenu.add_command(
             label=tr.t('menu.templates.open_folder'),
             command=self._open_templates_folder)
+
         tpls = self._list_user_templates()
         if tpls:
             sub = Menu(self.templatemenu, tearoff=0)
@@ -156,6 +173,21 @@ class MenuUIMixin:
                     command=lambda p=path: self._load_template_file(p))
             self.templatemenu.add_cascade(
                 label=tr.t('menu.templates.my'), menu=sub)
+
+        # === Плагинные шаблоны ===
+        registry = getattr(self, 'plugin_registry', None)
+        if registry is not None and getattr(registry, 'templates', None):
+            self.templatemenu.add_separator()
+            plugin_sub = Menu(self.templatemenu, tearoff=0)
+            for tid, td in registry.templates.items():
+                disp = (td["display"].get(tr.lang)
+                        or td["display"].get("en") or tid)
+                plugin_sub.add_command(
+                    label=disp,
+                    command=lambda t=tid: self._apply_template(t))
+            self.templatemenu.add_cascade(
+                label="Из плагинов", menu=plugin_sub)
+
         self.templatemenu.add_separator()
         self.templatemenu.add_command(
             label=tr.t('menu.templates.export'),
@@ -164,7 +196,7 @@ class MenuUIMixin:
             label=tr.t('menu.templates.import'),
             command=self._import_template_file)
 
-        # === ПЛАГИНЫ ===
+        # ---------------- Плагины ----------------
         self.pluginmenu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=tr.t('menu.plugins'),
                                  menu=self.pluginmenu)
@@ -179,7 +211,7 @@ class MenuUIMixin:
             label=tr.t('menu.plugins.list'),
             command=self._show_plugins_list)
 
-        # Вид
+        # ---------------- Вид ----------------
         self.viewmenu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=tr.t('menu.view'), menu=self.viewmenu)
         for key, var, cmd in [
@@ -202,6 +234,15 @@ class MenuUIMixin:
         self.viewmenu.add_checkbutton(
             label=tr.t('menu.view.drag_points'),
             variable=self.drag_points_enabled)
+
+        # --- Линейка ---
+        if not hasattr(self, 'measure_var'):
+            self.measure_var = tk.BooleanVar(value=False)
+        self.viewmenu.add_checkbutton(
+            label="📏 Линейка",
+            variable=self.measure_var,
+            command=self._toggle_measure)
+
         self.viewmenu.add_separator()
         self.viewmenu.add_checkbutton(
             label=tr.t('menu.view.panel_settings'),
@@ -470,9 +511,16 @@ class MenuUIMixin:
         except ImportError:
             from grapheditor.plugins import load_plugins
         try:
+            # Перезагружаем плагины (с откатом патчей внутри load_plugins)
             self.plugin_registry = load_plugins(self)
             self.type_combo['values'] = [tr.type_name(t)
                                          for t in INTERNAL_TYPES]
+            self.anim_combo['values'] = [
+                tr.anim_name(a) for a in self.INTERNAL_ANIM_TYPES] if hasattr(self, 'INTERNAL_ANIM_TYPES') else self.anim_combo['values']
+
+            # Перестраиваем меню, чтобы появились новые шаблоны плагинов
+            self._build_menu()
+
             msg = tr.t('msg.plugins_loaded',
                        count=len(self.plugin_registry.chart_types))
             if self.plugin_registry.errors:
@@ -482,39 +530,3 @@ class MenuUIMixin:
             messagebox.showinfo(tr.t('msg.info'), msg)
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
-
-    def _show_plugins_list(self):
-        win = tk.Toplevel(self.root)
-        win.title(tr.t('msg.plugins_list_title'))
-        win.transient(self.root)
-        win.geometry('560x420')
-
-        ttk.Label(win, text=tr.t('msg.plugins_warning'),
-                  foreground='#c0392b', wraplength=520
-                  ).pack(anchor=tk.W, padx=10, pady=(8, 4))
-
-        txt = tk.Text(win, wrap=tk.WORD, font=('Consolas', 10))
-        txt.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        lines = []
-        lines.append(tr.t('msg.plugins_list_header',
-                          count=len(self.plugin_registry.chart_types)))
-        lines.append('')
-        for tid, td in self.plugin_registry.chart_types.items():
-            disp = td.display.get(tr.lang) or td.display.get('en') or tid
-            lines.append(f"• {disp}   (id: {tid})")
-            lines.append(f"    fields: {', '.join(td.fields)}")
-            lines.append(f"    projection: {td.projection}")
-            lines.append('')
-        if self.plugin_registry.errors:
-            lines.append(tr.t('msg.plugins_errors_header'))
-            for name, tb in self.plugin_registry.errors:
-                lines.append(f"[{name}]")
-                lines.append(tb)
-                lines.append('')
-
-        txt.insert('1.0', '\n'.join(lines))
-        txt.configure(state='disabled')
-
-        ttk.Button(win, text=tr.t('msg.pdf_cancel'),
-                   command=win.destroy).pack(pady=(0, 10))

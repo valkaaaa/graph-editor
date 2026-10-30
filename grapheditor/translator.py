@@ -6,10 +6,7 @@
 from translations import TRANSLATIONS
 
 
-# ============================================================================
-# ОБРАТНАЯ СОВМЕСТИМОСТЬ: старый ключ 'ko' → 'kr'
-# ============================================================================
-_LANG_ALIASES = {'ko': 'kr'}
+_LANG_ALIASES = {'ko': 'kr'} # старый ключ 'ko' → 'kr'
 
 
 # ============================================================================
@@ -270,13 +267,21 @@ class Translator:
         self.lang = lang
         self.observers = []
         self._plugin_types = {}   # id → {lang: display}
+        self._plugin_anims = {}   # id → {lang: display}
 
-    # ----- Плагины -----
+    # ----- Плагины: типы графиков -----
     def register_plugin_type(self, id_, display):
         self._plugin_types[id_] = display
 
     def unregister_plugin_types(self):
         self._plugin_types = {}
+
+    # ----- Плагины: анимации -----
+    def register_plugin_anim(self, id_, display):
+        self._plugin_anims[id_] = display
+
+    def unregister_plugin_anims(self):
+        self._plugin_anims = {}
 
     # ----- Перевод -----
     def t(self, key, **kwargs):
@@ -301,6 +306,13 @@ class Translator:
         return internal_id
 
     def anim_name(self, internal_id):
+        # 1. Плагины
+        if internal_id in self._plugin_anims:
+            disp = self._plugin_anims[internal_id]
+            return (disp.get(self.lang)
+                    or disp.get('en')
+                    or next(iter(disp.values()), internal_id))
+        # 2. Встроенные
         key = ANIM_TO_KEY.get(internal_id)
         return self.t(key) if key else internal_id
 
@@ -315,6 +327,9 @@ class Translator:
         return display_text
 
     def find_anim_by_display(self, display_text):
+        for pid, disp in self._plugin_anims.items():
+            if display_text in disp.values() or display_text == pid:
+                return pid
         for internal_id in INTERNAL_ANIM_TYPES:
             if self.anim_name(internal_id) == display_text:
                 return internal_id

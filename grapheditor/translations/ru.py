@@ -764,4 +764,19 @@ TEXTS = {
     'settings.tab.style':     'Шрифты и стиль',
     'settings.tab.behavior':  'Поведение',
     'settings.editing':       'Редактирование',
+
+    # --- Обработка сигналов ---
+    'stats.smoothing_title': 'Обработка сигналов',
+    'stats.savgol_btn': 'Фильтр Савицкого-Голея',
+    'stats.savgol_window': 'Окно',
+    'stats.savgol_poly': 'Порядок',
+    'stats.interp_btn': 'Интерполяция',
+    'stats.interp_method': 'Метод',
+    'stats.interp_points': 'Точек',
+    'hist.savgol_applied': 'SG-фильтр: окно {window}, порядок {order}',
+    'hist.interp_applied': 'Интерполяция: {method}',
+
+    'stats.calc_title': 'Производная / Интеграл',
+    'stats.derivative_btn': 'd/dx',
+    'stats.integral_btn': '∫ dx',
 }

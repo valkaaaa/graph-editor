@@ -1,7 +1,9 @@
 """Дерево объектов, редактор таблицы, редактор матрицы."""
 import os
+import uuid
 import tkinter as tk
-from tkinter import ttk, messagebox, Menu, filedialog
+
+from tkinter import ttk, messagebox, Menu, filedialog, simpledialog
 from translator import tr
 
 
@@ -40,6 +42,25 @@ class TreeUIMixin:
             self.hidden_folders.add(name)
         self._update_listbox()
 
+    def _create_group(self):
+        """Объединяет выбранные объекты в визуальную группу."""
+        sel = self._get_selected_indices()
+        if len(sel) < 2:
+            return
+
+        group_id = str(uuid.uuid4())[:8]
+        group_name = simpledialog.askstring(
+            "Группа", "Название группы:", parent=self.root
+        ) or f"Группа {group_id}"
+
+        self._snapshot("Создана группа")
+        for idx in sel:
+            self.graphs_data[idx]['group_id'] = group_id
+            self.graphs_data[idx]['group_name'] = group_name
+
+        self._update_listbox()
+        self._redraw()
+
     def _on_tree_right_click(self, event):
         item = self.graph_tree.identify_row(event.y)
         if not item:
@@ -50,6 +71,7 @@ class TreeUIMixin:
         selection = self._get_selected_indices()
         vals = self.graph_tree.item(item, 'values')
         menu = Menu(self.root, tearoff=0)
+
         if len(selection) > 1:
             menu.add_command(label=tr.t('ctx.group_color', count=len(selection)),
                              command=self._group_change_color)
@@ -61,6 +83,12 @@ class TreeUIMixin:
                              command=self._show_palette_dialog)
             menu.add_command(label=tr.t('ctx.group_toggle_visibility', count=len(selection)),
                              command=self._toggle_visibility)
+
+            # --- НОВОЕ: Группировка ---
+            menu.add_separator()
+            menu.add_command(label="📦 Сгруппировать в одну папку",
+                             command=self._create_group)
+
             menu.add_separator()
             menu.add_command(label=tr.t('ctx.group_move', count=len(selection)),
                              command=self._move_to_folder)
@@ -73,9 +101,22 @@ class TreeUIMixin:
                              command=self._delete_graph)
             menu.post(event.x_root, event.y_root)
             return
+
         if vals:
             menu.add_command(label=tr.t('ctx.edit'), command=self._load_selected_to_form)
             menu.add_command(label=tr.t('ctx.duplicate'), command=self._duplicate_graph)
+
+            # --- НОВОЕ: Слои (Z-order) ---
+            menu.add_separator()
+            menu.add_command(label="На передний план",
+                             command=lambda: self._move_zorder('front'))
+            menu.add_command(label="На задний план",
+                             command=lambda: self._move_zorder('back'))
+            menu.add_command(label="Поднять на слой выше",
+                             command=lambda: self._move_zorder('up'))
+            menu.add_command(label="Опустить на слой ниже",
+                             command=lambda: self._move_zorder('down'))
+
             menu.add_separator()
             menu.add_command(label=tr.t('ctx.notes'), command=self._edit_notes)
             menu.add_command(label=tr.t('ctx.rename'), command=self._rename_graph)
@@ -97,9 +138,20 @@ class TreeUIMixin:
 
     def _open_table_editor(self, axis=None):
         t = tr.find_type_by_display(self.type_var.get())
-        if t in ("Heatmap", "Contour", "Imshow", "3D Поверхность", "3D Сетка"):
+
+        matrix_types = (
+            "Heatmap", "Contour", "Imshow", "3D Поверхность", "3D Сетка",
+            "Chord", "Adjacency matrix", "Дендрограмма", "Cluster dendrogram",
+            "Alluvial diagram", "Stream plot", "Streamlines", "Mapper algorithm",
+            "Bump chart", "Parallel coordinates", "Radar chart", "Isopleth",
+            "Isosurface 3D", "Waterfall spectrogram 3D", "Choropleth",
+            "Dot density map", "Диаграмма Тейлора", "Полярная теплокарта"
+        )
+
+        if t in matrix_types:
             self._open_matrix_editor()
             return
+
         win = tk.Toplevel(self.root)
         win.title(tr.t('table.editor_title'))
         win.geometry("780x600")
@@ -109,6 +161,7 @@ class TreeUIMixin:
         skip_z = ("3D" not in t and t not in ("Quiver", "Пузырьковая",
                                               "3D Полигон", "3D Триангуляция"))
         skip_yerr = (t not in ("Линия", "Точечная", "Столбчатая") and t != "Quiver")
+
         cols = []
         if not skip_x:
             cols.append(('x', self.entry_x, 'X'))
@@ -117,31 +170,38 @@ class TreeUIMixin:
             cols.append(('z', self.entry_z, 'Z'))
         if not skip_yerr:
             cols.append(('yerr', self.entry_yerr, 'Yerr'))
+
         series = {}
         for cid, entry, _ in cols:
             text = entry.get().strip()
             series[cid] = self._parse_data(text) if text else []
             if series[cid] is None:
                 series[cid] = []
+
         max_len = max((len(v) for v in series.values()), default=0)
         if max_len == 0:
             max_len = 5
+
         for cid in series:
             while len(series[cid]) < max_len:
                 series[cid].append('')
+
         top = ttk.Frame(win, padding=5)
         top.pack(fill=tk.X)
         rows_var = tk.StringVar(value=tr.t('table.rows', n=max_len))
         ttk.Label(top, textvariable=rows_var).pack(side=tk.LEFT)
+
         tree_frame = ttk.Frame(win)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         col_ids = ['idx'] + [c[0] for c in cols]
+
         tree = ttk.Treeview(tree_frame, columns=col_ids, show='headings',
                             height=18, selectmode='extended')
         for cid in col_ids:
             text = '#' if cid == 'idx' else cid.upper()
             tree.heading(cid, text=text)
             tree.column(cid, width=40 if cid == 'idx' else 110, anchor=tk.CENTER)
+
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -200,6 +260,7 @@ class TreeUIMixin:
             ee.bind('<FocusOut>', commit)
 
         tree.bind('<Double-1>', on_double_click)
+
         row_btns = ttk.Frame(win, padding=5)
         row_btns.pack(fill=tk.X)
 
@@ -240,6 +301,7 @@ class TreeUIMixin:
         if any(c[0] == 'x' for c in cols):
             ttk.Button(row_btns, text=tr.t('table.btn_sort_x'),
                        command=lambda: sort_by_col('x')).pack(side=tk.LEFT, padx=2)
+
         io_btns = ttk.Frame(win, padding=5)
         io_btns.pack(fill=tk.X)
 
@@ -345,6 +407,7 @@ class TreeUIMixin:
                    command=import_excel_table).pack(side=tk.LEFT, padx=2)
         ttk.Button(io_btns, text=tr.t('table.btn_export_excel'),
                    command=export_excel_table).pack(side=tk.LEFT, padx=2)
+
         bottom = ttk.Frame(win, padding=5)
         bottom.pack(fill=tk.X)
 

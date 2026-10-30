@@ -641,4 +641,18 @@ TEXTS = {
     'settings.tab.style':     'Fonts & Style',
     'settings.tab.behavior':  'Behavior',
     'settings.editing':       'Editing',
+
+    'stats.smoothing_title': 'Signal processing',
+    'stats.savgol_btn': 'Savitzky-Golay filter',
+    'stats.savgol_window': 'Window',
+    'stats.savgol_poly': 'Order',
+    'stats.interp_btn': 'Interpolation',
+    'stats.interp_method': 'Method',
+    'stats.interp_points': 'Points',
+    'hist.savgol_applied': 'SG filter: window={window}, order={order}',
+    'hist.interp_applied': 'Interpolation: {method}',
+
+    'stats.calc_title': 'Derivative / Integral',
+    'stats.derivative_btn': 'd/dx',
+    'stats.integral_btn': '∫ dx',
 }

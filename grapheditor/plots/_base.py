@@ -12,6 +12,7 @@ import re
 
 import tkinter as tk
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from tkinter import messagebox, colorchooser
@@ -45,6 +46,8 @@ class BasePlotsMixin:
         self.toolbar = NavigationToolbar2Tk(self.canvas, parent)
         self.toolbar.update()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # --- Привязка событий ---
         self.canvas.mpl_connect('motion_notify_event', self._update_status)
         self.canvas.mpl_connect('motion_notify_event', self._on_motion_tooltip)
         self.canvas.mpl_connect('motion_notify_event',
@@ -55,6 +58,11 @@ class BasePlotsMixin:
         self.canvas.mpl_connect('button_press_event', self._on_press_drag)
         self.canvas.mpl_connect('motion_notify_event', self._on_motion_drag)
         self.canvas.mpl_connect('button_release_event', self._on_release_drag)
+
+        # --- Inline-редактор данных ---
+        self.canvas.mpl_connect('button_press_event', self._on_inline_edit_press)
+        # --- Инструмент "Линейка" ---
+        self.canvas.mpl_connect('button_press_event', self._on_press_measure)
 
     def _style_axes(self):
         for ax in self.axes:
@@ -72,9 +80,6 @@ class BasePlotsMixin:
                     ax.set_zlabel("Z")
 
     def _apply_grid_to_axes(self, axes, state=None):
-        """Применяет состояние сетки к указанным осям.
-        Использует xaxis.grid / yaxis.grid — они корректно работают
-        с False и не выдают UserWarning."""
         if state is None:
             state = self.show_grid_var.get()
         for ax in axes or []:
@@ -156,17 +161,19 @@ class BasePlotsMixin:
         self._init_tooltip()
         self._init_crosshair()
         self._apply_grid_to_axes(self.axes)
+
         if projection == '2d':
             self.graphs_data = [
                 d for d in self.graphs_data
                 if "3D" not in d['type'] and d['type'] not in
                 ("Радиальная", "Полярный scatter",
                  "Полярная теплокарта", "Роза ветров",
-                 "Диаграмма Тейлора")
+                 "Диаграмма Тейлора", "Sunburst", "Radar chart")
             ]
         elif projection == '3d':
             self.graphs_data = [d for d in self.graphs_data
                                 if "3D" in d['type']]
+
         for d in self.graphs_data:
             if d.get('subplot_index', 0) >= len(self.axes):
                 d['subplot_index'] = 0
@@ -178,24 +185,16 @@ class BasePlotsMixin:
     # УПРАВЛЕНИЕ ARTIST
     # ========================================================================
     def _remove_artist(self, artist):
-        """Удаляет один artist, контейнер matplotlib или список artists."""
         if artist is None:
             return
-
-        # Наши контейнеры — итерируем. Делаем это ДО hasattr('remove'),
-        # потому что у list есть свой .remove(x), который тут не нужен.
         if isinstance(artist, (list, tuple)):
             for a in artist:
                 self._remove_artist(a)
             return
-
         if isinstance(artist, dict):
             for a in artist.values():
                 self._remove_artist(a)
             return
-
-        # Обычный matplotlib-artist или контейнер (BarContainer,
-        # ErrorbarContainer, Colorbar и пр.) — у них есть .remove()
         if hasattr(artist, 'remove'):
             try:
                 artist.remove()
@@ -203,22 +202,16 @@ class BasePlotsMixin:
                 pass
 
     def _destroy_object(self, data):
-        """Полностью удаляет объект: главный artist + доп. artists
-        + сброс настроек осей (xticks, yticks, invert, grid)."""
         if not isinstance(data, dict):
             self._remove_artist(data)
             return
 
-        # Главный artist
         self._remove_artist(data.get('artist'))
 
-        # Дополнительные artists (fill_between, errorbar, glow, colorbar,
-        # Total-бар в водопаде, стрелки в sankey/chord и т.д.)
         for extra in data.get('_extra_artists', []) or []:
             self._remove_artist(extra)
         data['_extra_artists'] = []
 
-        # Коллбек для сброса настроек осей
         cleanup = data.get('_cleanup')
         if callable(cleanup):
             try:
@@ -228,7 +221,6 @@ class BasePlotsMixin:
         data['_cleanup'] = None
 
     def _set_artist_visible(self, artist, visible):
-        """Рекурсивно применяет видимость ко всем вложенным artist-ам."""
         if artist is None:
             return
         if isinstance(artist, (list, tuple)):
@@ -285,7 +277,8 @@ class BasePlotsMixin:
         needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter",
                                          "Полярная теплокарта",
                                          "Роза ветров",
-                                         "Диаграмма Тейлора")
+                                         "Диаграмма Тейлора",
+                                         "Sunburst", "Radar chart")
                           for d in self.graphs_data)
         proj_kw = {}
         if needs_3d:
@@ -350,20 +343,61 @@ class BasePlotsMixin:
         return np.convolve(y, kernel, mode='same')
 
     def _safe_eval(self, expr, x_val, t_val, y_val=0, silent=False):
+        # Базовые функции numpy
         sd = {
+            # --- Базовые математические ---
+            "abs": np.abs, "sign": np.sign,
+            "floor": np.floor, "ceil": np.ceil, "round": np.round,
+            "trunc": np.trunc, "rint": np.rint,
+            "min": np.minimum, "max": np.maximum, "clip": np.clip,
+            "where": np.where, "power": np.power, "mod": np.mod,
+
+            # --- Тригонометрия ---
             "sin": np.sin, "cos": np.cos, "tan": np.tan,
             "arcsin": np.arcsin, "arccos": np.arccos,
             "arctan": np.arctan, "arctan2": np.arctan2,
+            "hypot": np.hypot,
+            # Гиперболические
             "sinh": np.sinh, "cosh": np.cosh, "tanh": np.tanh,
-            "exp": np.exp, "log": np.log, "log10": np.log10,
-            "log2": np.log2, "sqrt": np.sqrt, "abs": np.abs,
-            "sign": np.sign, "floor": np.floor, "ceil": np.ceil,
-            "round": np.round, "min": np.minimum, "max": np.maximum,
-            "where": np.where, "power": np.power, "mod": np.mod,
-            "hypot": np.hypot, "radians": np.radians,
-            "degrees": np.degrees, "pi": np.pi, "e": np.e,
+            "arcsinh": np.arcsinh, "arccosh": np.arccosh, "arctanh": np.arctanh,
+            # Переводы углов
+            "deg2rad": np.deg2rad, "rad2deg": np.rad2deg,
+
+            # --- Экспоненты и логарифмы ---
+            "exp": np.exp, "exp2": np.exp2, "expm1": np.expm1,
+            "log": np.log, "log10": np.log10, "log2": np.log2, "log1p": np.log1p,
+            "sqrt": np.sqrt, "cbrt": np.cbrt,
+
+            # --- Работа с массивами (полезно для Генератора) ---
+            "cumsum": np.cumsum, "diff": np.diff,
+            "average": np.average, "median": np.median, "std": np.std,
+
+            # --- Комплексные числа (для 3D и фракталов) ---
+            "real": np.real, "imag": np.imag, "angle": np.angle, "conj": np.conj,
+
+            # --- Константы ---
+            "pi": np.pi, "e": np.e, "tau": np.tau, "inf": np.inf, "nan": np.nan,
+
+            # --- Переменные ---
             "x": x_val, "y": y_val, "t": t_val,
         }
+
+        # Добавляем спецфункции из scipy (если установлен)
+        try:
+            from scipy import special as sp
+            sd.update({
+                "erf": sp.erf,            # Функция ошибок (интеграл Гаусса)
+                "erfc": sp.erfc,          # Дополнительная функция ошибок
+                "gamma": sp.gamma,        # Гамма-функция
+                "lgamma": sp.gammaln,     # Логарифм гамма-функции
+                "jv": sp.jv,              # Функция Бесселя первого рода (jv(n, x))
+                "yv": sp.yv,              # Функция Бесселя второго рода
+                "heaviside": sp.heaviside,# Функция Хевисайда (ступенька)
+                "airy": sp.airy,          # Функция Эйри
+            })
+        except ImportError:
+            pass  # Если scipy нет, просто пропускаем
+
         try:
             return eval(expr, {"__builtins__": {}}, sd)
         except Exception as e:
@@ -489,3 +523,21 @@ class BasePlotsMixin:
                                   initialcolor=self.color_var.get())
         if c[1]:
             self.color_var.set(c[1])
+
+    def _apply_font_settings(self):
+        s = self.settings
+        mpl.rcParams['font.family'] = s['font_family']
+        mpl.rcParams['font.size'] = s['font_base']
+        mpl.rcParams['axes.titlesize'] = s['font_title']
+        mpl.rcParams['axes.labelsize'] = s['font_labels']
+        mpl.rcParams['legend.fontsize'] = s['font_legend']
+        mpl.rcParams['xtick.labelsize'] = s['font_ticks']
+        mpl.rcParams['ytick.labelsize'] = s['font_ticks']
+        mpl.rcParams['axes.linewidth'] = s['axis_lw']
+
+        # --- MATHTEXT ---
+        mpl.rcParams['text.usetex'] = s.get('use_latex', False)
+        mpl.rcParams['mathtext.default'] = 'regular'
+
+        if hasattr(self, 'canvas'):
+            self._redraw_all()

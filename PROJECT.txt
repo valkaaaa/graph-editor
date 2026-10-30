@@ -7,6 +7,11 @@ project:
     grapheditor:
         plots:
             __init__.py;
+            _artists_2d.py;
+            _artists_3d.py;
+            _artists_extra.py;
+            _artists_network.py;
+            _artists_special.py;
             _base.py;
             _create_artist.py;
             _extras.py;
@@ -14,7 +19,13 @@ project:
         plugins:
             bundled:
                 __init__.py;
-                stem_plot.py;
+                bland-altman-plot.py;
+                cumulative-histogram.py;
+                forest-plot.py;
+                lissajous-anim.py;
+                regression-template.py;
+                stem-plot.py;
+                sunset-theme.py
             __init__.py;
         translations:
             __init__.py;
@@ -55,7 +66,7 @@ project:
         documents.py;
         logging_setup.py;
         main.py;
-        palettes.py;
+        palletes.py;
         pdf_export.py;
         settings.py;
         shortcuts.py;
@@ -65,12 +76,13 @@ project:
         translator.py;
     .gitignore;
     .python-version;
-    requirements.txt;
-    pyproject.toml;
     app.pyw;
     EXAMPLES.txt;
-    TYPES.md;
-    PROJECT.txt;
     LICENSE.txt;
+    PROJECT.txt;
+    pyproject.toml;
     README.md;
+    requirements.txt;
+    requirements-dev.txt;
+    TYPES.md
 ===========================================================

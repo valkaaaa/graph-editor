@@ -1,15 +1,4 @@
-"""Ввод/вывод, tooltip, crosshair, drag, группы, папки, генераторы, экспорт.
-
-Содержит:
-  - tooltip (2D/3D), crosshair, статус-бар
-  - копирование/вставка из буфера, drop файлов
-  - групповые операции (цвет/толщина/маркер/экспорт)
-  - объекты и папки (дублирование, переименование, заметки, перемещение)
-  - генераторы данных (формулы + случайные числа)
-  - drag точек мышью
-  - IO: JSON, ZIP, .graphx, .graphxanim, CSV, изображения,
-        HTML (Plotly), Excel
-"""
+"""Ввод/вывод, tooltip, crosshair, drag, группы, папки, генераторы, экспорт."""
 import os
 import re
 import csv
@@ -160,9 +149,19 @@ class IOMixin:
                 self.tooltip_annot.set_visible(False)
                 self.canvas.draw_idle()
             return
-        text = f"{best[2]}\n({best[0]:.3g}, {best[1]:.3g})"
-        if best[3]:
-            text += f"\n💬 {best[3]}"
+
+        # --- Обновлено: X, Y, sin, cos ---
+        if len(best) == 4:
+            xv, yv, lbl, note = best
+            sin_val = np.sin(yv)
+            cos_val = np.cos(yv)
+            text = (f"{lbl}\n"
+                    f"X: {xv:.4g}\n"
+                    f"Y: {yv:.4g}\n"
+                    f"sin(Y): {sin_val:.3f}\n"
+                    f"cos(Y): {cos_val:.3f}")
+            if note: text += f"\n💬 {note}"
+
         if self.tooltip_annot.axes != ax:
             try:
                 self.tooltip_annot.remove()
@@ -220,8 +219,7 @@ class IOMixin:
                     continue
                 if d2 < best_d2:
                     best_d2 = d2
-                    best = (xi, yi, zi, d['label'],
-                            d.get('notes', ''))
+                    best = (xi, yi, zi, d['label'], d.get('notes', ''))
         if best is None:
             return
         try:
@@ -250,10 +248,19 @@ class IOMixin:
                 bbox=dict(boxstyle="round", fc="#ffffcc",
                           ec="gray", alpha=0.9),
                 arrowprops=dict(arrowstyle="->"))
-        text = (f"{best[3]}\n({best[0]:.3g}, "
-                f"{best[1]:.3g}, {best[2]:.3g})")
-        if best[4]:
-            text += f"\n💬 {best[4]}"
+
+        # --- Обновлено: X, Y, Z, sin, cos ---
+        xv, yv, zv, lbl, note = best
+        sin_val = np.sin(zv)
+        cos_val = np.cos(zv)
+        text = (f"{lbl}\n"
+                f"X: {xv:.4g}\n"
+                f"Y: {yv:.4g}\n"
+                f"Z: {zv:.4g}\n"
+                f"sin(Z): {sin_val:.3f}\n"
+                f"cos(Z): {cos_val:.3f}")
+        if note: text += f"\n💬 {note}"
+
         self.tooltip_annot.xy = (x2, y2)
         self.tooltip_annot.set_text(text)
         self.tooltip_annot.set_visible(True)
@@ -325,6 +332,158 @@ class IOMixin:
                 self.canvas.draw_idle()
         except Exception:
             pass
+
+    # ========================================================================
+    # ЛИНЕЙКА (MEASURE TOOL)
+    # ========================================================================
+    def _toggle_measure(self):
+        self.measure_mode = self.measure_var.get()
+        if not self.measure_mode:
+            if hasattr(self, '_measure_artist') and self._measure_artist:
+                try: self._measure_artist.remove()
+                except: pass
+            if hasattr(self, '_measure_text') and self._measure_text:
+                try: self._measure_text.remove()
+                except: pass
+            self._measure_pt1 = None
+            self.canvas.draw_idle()
+
+    def _on_press_measure(self, event):
+        if not getattr(self, 'measure_mode', False):
+            return
+        if event.inaxes is None or event.xdata is None:
+            return
+
+        if not hasattr(self, '_measure_pt1'):
+            self._measure_pt1 = None
+
+        # Первая точка
+        if self._measure_pt1 is None:
+            self._measure_pt1 = (event.xdata, event.ydata)
+            self.status_var.set("Линейка: выберите вторую точку")
+            return
+
+        # Вторая точка — рисуем
+        x1, y1 = self._measure_pt1
+        x2, y2 = event.xdata, event.ydata
+
+        # Удаляем старую линию
+        if hasattr(self, '_measure_artist') and self._measure_artist:
+            try: self._measure_artist.remove()
+            except: pass
+        if hasattr(self, '_measure_text') and self._measure_text:
+            try: self._measure_text.remove()
+            except: pass
+
+        ax = event.inaxes
+        dx = x2 - x1
+        dy = y2 - y1
+        dist = np.hypot(dx, dy)
+
+        self._measure_artist = ax.annotate(
+            '', xy=(x2, y2), xytext=(x1, y1),
+            arrowprops=dict(arrowstyle='<->', color='red', lw=1.5),
+            zorder=999
+        )
+
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        text = f"ΔX={dx:.3g}\nΔY={dy:.3g}\nДлина={dist:.3g}"
+
+        self._measure_text = ax.text(
+            mid_x, mid_y, text,
+            bbox=dict(boxstyle="round", fc="white", ec="red", alpha=0.9),
+            fontsize=9, ha='center', va='center', color='red', zorder=1000
+        )
+
+        self._measure_pt1 = None  # Сброс
+        self.canvas.draw_idle()
+
+    # ========================================================================
+    # INLINE-РЕДАКТОР
+    # ========================================================================
+    def _on_inline_edit_press(self, event):
+        if event.button != 1 or event.inaxes is None:
+            return
+        if event.dblclick is False:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        ax = event.inaxes
+        if hasattr(ax, 'get_zlim'):
+            return
+        ex, ey = event.xdata, event.ydata
+        subplot_idx = self.axes.index(ax) if ax in self.axes else 0
+
+        best = None
+        best_d2 = float('inf')
+        for i, d in enumerate(self.graphs_data):
+            if d['type'] not in ("Линия", "Точечная"):
+                continue
+            if d.get('subplot_index', 0) != subplot_idx:
+                continue
+            xs = d.get('x', [])
+            ys = d.get('y', [])
+            for j, (xi, yi) in enumerate(zip(xs, ys)):
+                try:
+                    d2 = (xi - ex) ** 2 + (yi - ey) ** 2
+                except TypeError:
+                    continue
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best = (i, j, xi, yi)
+
+        if best is None:
+            return
+
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        thresh = 0.003 * ((xlim[1] - xlim[0]) ** 2
+                          + (ylim[1] - ylim[0]) ** 2)
+        if best_d2 > thresh:
+            return
+
+        obj_idx, pt_idx, xi, yi = best
+
+        try:
+            x_px, y_px = ax.transData.transform((xi, yi))
+        except Exception:
+            return
+        canvas = self.canvas.get_tk_widget()
+        canvas_h = canvas.winfo_height()
+        y_tk = int(canvas_h - y_px)
+
+        entry = tk.Entry(canvas, width=12, font=('Consolas', 10),
+                          justify='center',
+                          bg='#ffffcc', fg='#000000',
+                          relief='solid', borderwidth=1)
+        entry.place(x=int(x_px) - 40, y=y_tk - 25, width=80)
+        entry.insert(0, f"{yi:g}")
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        def _commit(event=None):
+            try:
+                new_val = float(entry.get().replace(',', '.'))
+            except ValueError:
+                entry.destroy()
+                return
+            self._snapshot(
+                f"Точка #{pt_idx}: Y {yi:.4g} → {new_val:.4g}")
+            self.graphs_data[obj_idx]['y'][pt_idx] = new_val
+            self._destroy_object(self.graphs_data[obj_idx])
+            self.graphs_data[obj_idx]['artist'] = self._create_artist(
+                self.graphs_data[obj_idx])
+            self._redraw()
+            entry.destroy()
+
+        def _cancel(event=None):
+            entry.destroy()
+
+        entry.bind('<Return>', _commit)
+        entry.bind('<Escape>', _cancel)
+        entry.bind('<FocusOut>', _cancel)
 
     # ========================================================================
     # ДАННЫЕ / БУФЕР / DROP
@@ -852,17 +1011,11 @@ class IOMixin:
     # IO — JSON
     # ========================================================================
     def _save_json(self):
-        # Если путь уже известен — сохраняем молча, без диалога.
-        # Save As остаётся на Ctrl+Shift+S (_save_json_as).
-        current_path = None
-        if getattr(self, "current_doc_idx", -1) >= 0:
-            current_path = self.documents[self.current_doc_idx].path
-
-        if current_path:
-            path = current_path
-        else:
-            return self._save_json_as()
-
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")])
+        if not path:
+            return
         data = [{k: v for k, v in d.items()
                  if k not in ('artist', '_extra_artists', '_cleanup')}
                 for d in self.graphs_data]
@@ -872,13 +1025,15 @@ class IOMixin:
                           allow_nan=False,
                           default=lambda o: o.tolist()
                           if isinstance(o, np.ndarray) else o)
-            if self.current_doc_idx >= 0:
+            if getattr(self, 'current_doc_idx', -1) >= 0:
                 doc = self.documents[self.current_doc_idx]
                 doc.path = path
                 doc.modified = False
-            self._update_window_title()  # ← снимает звёздочку, ставит basename
+                doc.name = os.path.splitext(os.path.basename(path))[0]
+            if hasattr(self, '_update_window_title'):
+                self._update_window_title()
             self._show_history(tr.t('hist.saved_json',
-                                    name=os.path.basename(path)))
+                                     name=os.path.basename(path)))
             self.status_var.set(tr.t('hist.saved_json', name=path))
             try:
                 self._push_recent(path)
@@ -927,12 +1082,11 @@ class IOMixin:
                 doc = self.documents[self.current_doc_idx]
                 doc.path = path
                 doc.modified = False
-                # Имя документа тоже обновляем — иначе «Без имени 1» останется
-                # до следующего _new_document.
                 doc.name = os.path.splitext(os.path.basename(path))[0]
-            self._update_window_title()
+            if hasattr(self, '_update_window_title'):
+                self._update_window_title()
             self._show_history(tr.t('hist.loaded_json',
-                                    name=os.path.basename(path)))
+                                     name=os.path.basename(path)))
             self.status_var.set(tr.t('hist.loaded_json', name=path))
             try:
                 self._push_recent(path)
@@ -1145,6 +1299,13 @@ class IOMixin:
                 if os.path.exists(sp):
                     with open(sp, 'r', encoding='utf-8') as f:
                         self._apply_settings_dict(json.load(f))
+            if getattr(self, 'current_doc_idx', -1) >= 0:
+                doc = self.documents[self.current_doc_idx]
+                doc.path = path
+                doc.modified = False
+                doc.name = os.path.splitext(os.path.basename(path))[0]
+            if hasattr(self, '_update_window_title'):
+                self._update_window_title()
             self._show_history(tr.t('hist.loaded_graphx',
                                      name=os.path.basename(path)))
             try:
@@ -1430,6 +1591,7 @@ class IOMixin:
             messagebox.showerror(tr.t('msg.error'),
                                   tr.t('msg.install_plotly'))
             return
+        skipped = []
         try:
             fig = go.Figure()
             for d in self.graphs_data:
@@ -1761,16 +1923,22 @@ class IOMixin:
                             mode='lines', name=d['label'],
                             line=dict(color=d['color']),
                             fill='tozeroy'))
+                    else:
+                        skipped.append(t)
                 except Exception:
+                    skipped.append(t)
                     continue
             fig.update_layout(title=self.plot_title_var.get(),
                               xaxis_title=self.plot_xlabel_var.get(),
                               yaxis_title=self.plot_ylabel_var.get())
             fig.write_html(path, include_plotlyjs='cdn')
+            msg = tr.t('msg.html_saved', path=path)
+            if skipped:
+                msg += f"\n\nПропущены типы (нет поддержки HTML):\n" \
+                       f"{', '.join(sorted(set(skipped)))}"
             self._show_history(tr.t('hist.saved_html',
                                      name=os.path.basename(path)))
-            messagebox.showinfo(tr.t('msg.done'),
-                                tr.t('msg.html_saved', path=path))
+            messagebox.showinfo(tr.t('msg.done'), msg)
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
