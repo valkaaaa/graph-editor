@@ -113,7 +113,7 @@ class BasePlotsMixin:
 
         if t in ("Радиальная", "Полярный scatter",
                  "Полярная теплокарта", "Роза ветров",
-                 "Диаграмма Тейлора"):
+                 "Диаграмма Тейлора", "Sunburst", "Radar chart"):
             return 'polar'
         if "3D" in t:
             return '3d'

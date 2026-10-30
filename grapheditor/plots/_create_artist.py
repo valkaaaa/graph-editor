@@ -2,11 +2,14 @@
 
 Единственная публичная точка входа — `_create_artist(data)`.
 
-Собирает `CreateArtistMixin` из четырёх миксинов по категориям:
+Собирает `CreateArtistMixin` из пяти миксинов по категориям:
   - Artists2DMixin      (_artists_2d.py)       — 2D базовые + статистика
   - ArtistsNetworkMixin (_artists_network.py)  — матричные + сетевые + иерархия
   - Artists3DMixin      (_artists_3d.py)       — все 3D-графики
   - ArtistsSpecialMixin (_artists_special.py)  — радио, ML, гео, экзотика
+  - ArtistsExtraMixin   (_artists_extra.py)    — 14 типов без явной ветки
+                                                 в старой версии (Dot plot,
+                                                 Funnel, Radar, ...)
 
 Общая инициализация (сброс ссылок, сглаживание, выбор осей,
 плагины) — здесь. Специфика рисования — в миксинах.
@@ -19,12 +22,19 @@ from ._artists_2d import Artists2DMixin, TYPES_2D
 from ._artists_network import ArtistsNetworkMixin, TYPES_NETWORK
 from ._artists_3d import Artists3DMixin, TYPES_3D
 from ._artists_special import ArtistsSpecialMixin, TYPES_SPECIAL
+from ._artists_extra import ArtistsExtraMixin, TYPES_EXTRA
 
 
 # Множество всех известных встроенных типов.
 # Полезно для тестов и проверок: если тип не в этом множестве
 # и не зарегистрирован плагином — он уйдёт в fallback.
-_ALL_KNOWN_TYPES = TYPES_2D | TYPES_NETWORK | TYPES_3D | TYPES_SPECIAL
+_ALL_KNOWN_TYPES = (
+    TYPES_2D
+    | TYPES_NETWORK
+    | TYPES_3D
+    | TYPES_SPECIAL
+    | TYPES_EXTRA
+)
 
 
 class CreateArtistMixin(
@@ -32,6 +42,7 @@ class CreateArtistMixin(
     ArtistsNetworkMixin,
     Artists3DMixin,
     ArtistsSpecialMixin,
+    ArtistsExtraMixin,
 ):
     """Собирает все миксины отрисовки + предоставляет _create_artist()."""
 
@@ -97,9 +108,6 @@ class CreateArtistMixin(
             return registry.call_draw(self, target_ax, data)
 
         # ---------- Диспетчеризация по категориям ----------
-        # Порядок важен: 3D проверяется первым, потому что
-        # "Radial tree 3D" есть в TYPES_3D, но с точки зрения проекции
-        # это тоже 3D-тип, и его нужно рисовать на 3D-осях.
         if t in TYPES_3D:
             return self._draw_3d(data, base_ax, target_ax)
 
@@ -111,6 +119,9 @@ class CreateArtistMixin(
 
         if t in TYPES_SPECIAL:
             return self._draw_special(data, base_ax, target_ax)
+
+        if t in TYPES_EXTRA:
+            return self._draw_extra(data, base_ax, target_ax)
 
         # ---------- Fallback ----------
         # Неизвестный тип (обычно — опечатка в INTERNAL_TYPES

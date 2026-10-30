@@ -313,15 +313,22 @@ def _projection_for(t: str) -> str:
 # ПОИСК FALLBACK-ТИПОВ В ИСХОДНИКЕ
 # ============================================================================
 def _find_fallback_types() -> set[str]:
-    path = ROOT / "grapheditor" / "plots" / "_create_artist.py"
-    if not path.exists():
+    """Возвращает типы, для которых нет ни миксина, ни ветки.
+
+    После рефакторинга 4 миксина содержат все ветки, поэтому проверка
+    по исходникам _create_artist.py больше не имеет смысла. Вместо этого
+    смотрим, попал ли тип в одно из TYPES_* множеств.
+    """
+    try:
+        from grapheditor.plots._artists_2d import TYPES_2D
+        from grapheditor.plots._artists_network import TYPES_NETWORK
+        from grapheditor.plots._artists_3d import TYPES_3D
+        from grapheditor.plots._artists_special import TYPES_SPECIAL
+    except ImportError:
         return set()
-    src = path.read_text(encoding="utf-8")
-    handled: set[str] = set()
-    handled.update(re.findall(r't\s*==\s*"([^"]+)"', src))
-    for group in re.findall(r't\s+in\s+\(([^)]+)\)', src, re.S):
-        handled.update(re.findall(r'"([^"]+)"', group))
-    return {t for t in INTERNAL_TYPES if t not in handled}
+
+    known = TYPES_2D | TYPES_NETWORK | TYPES_3D | TYPES_SPECIAL
+    return {t for t in INTERNAL_TYPES if t not in known}
 
 
 # ============================================================================
