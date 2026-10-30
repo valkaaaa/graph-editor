@@ -102,10 +102,10 @@ class ChartTypeDef:
     __slots__ = ('id', 'display', 'hint', 'fields',
                  'draw', 'projection', 'extra_defaults')
 
-    def __init__(self, id_, display, hint, fields, draw,
+    def __init__(self, id, display, hint, fields, draw,
                  projection='2d', extra_defaults=None):
-        self.id = id_
-        self.display = display or {"en": id_}
+        self.id = id
+        self.display = display or {"en": id}
         self.hint = hint or {}
         self.fields = fields or ["x", "y"]
         self.draw = draw
@@ -158,25 +158,25 @@ class PluginAPI:
         self.version = API_VERSION
 
     # ----- Регистрация типа -----
-    def add_chart_type(self, id_, display, draw, hint=None,
+    def add_chart_type(self, id, display, draw, hint=None,
                        fields=None, projection='2d',
                        extra_defaults=None):
         """Регистрирует новый тип графика."""
-        if not id_ or not callable(draw):
+        if not id or not callable(draw):
             raise ValueError("add_chart_type: нужны id и draw")
-        if id_ in TYPE_TO_KEY:
+        if id in TYPE_TO_KEY:
             raise ValueError(
-                f"'{id_}' — встроенный тип, нельзя переопределить")
-        if id_ in self._registry.chart_types:
-            raise ValueError(f"Тип '{id_}' уже зарегистрирован")
-        if id_ in INTERNAL_TYPES:
-            raise ValueError(f"Тип '{id_}' уже есть в списке")
+                f"'{id}' — встроенный тип, нельзя переопределить")
+        if id in self._registry.chart_types:
+            raise ValueError(f"Тип '{id}' уже зарегистрирован")
+        if id in INTERNAL_TYPES:
+            raise ValueError(f"Тип '{id}' уже есть в списке")
 
-        td = ChartTypeDef(id_, display, hint, fields, draw,
+        td = ChartTypeDef(id, display, hint, fields, draw,
                           projection, extra_defaults)
-        self._registry.chart_types[id_] = td
-        tr.register_plugin_type(id_, display)
-        INTERNAL_TYPES.append(id_)
+        self._registry.chart_types[id] = td
+        tr.register_plugin_type(id, display)
+        INTERNAL_TYPES.append(id)
 
     # ----- Хелперы (чтобы плагин не делал лишних импортов) -----
     @property
@@ -247,8 +247,129 @@ def load_plugins(app):
         except Exception:
             registry.errors.append((name, traceback.format_exc()))
 
+    _patch_app_methods(app, registry)
+
     return registry
 
+def _patch_app_methods(app, registry):
+    """Оборачивает _start_animation и _apply_template, чтобы они
+    знали про плагины. Если плагинов нужного типа нет — ничего не делает.
+    Вызывается один раз из load_plugins.
+    """
+    # ----- Анимации -----
+    if getattr(registry, 'animations', None):
+        if not getattr(app, '_anim_patched', False):
+            original_start = app._start_animation
+            animations = registry.animations
+
+            def patched_start():
+                at = tr.find_anim_by_display(app.anim_type_var.get())
+
+                if at not in animations:
+                    return original_start()
+
+                # Плагинная анимация — своя логика
+                if app.current_animation is not None:
+                    from tkinter import messagebox
+                    messagebox.showinfo(
+                        tr.t('msg.info'),
+                        tr.t('msg.anim_already_running'))
+                    return
+
+                app._stop_animation()
+                app.fig.clear()
+
+                is_3d = '3D' in at
+                app.axes = []
+                if is_3d:
+                    app.ax = app.fig.add_subplot(111, projection='3d')
+                else:
+                    app.ax = app.fig.add_subplot(111)
+                app.axes.append(app.ax)
+                app._style_axes()
+
+                try:
+                    update = animations[at]["create"](app, app.ax)
+                except Exception:
+                    import traceback
+                    from tkinter import messagebox
+                    traceback.print_exc()
+                    messagebox.showerror(
+                        "Ошибка анимации плагина", at)
+                    return
+
+                if update is None:
+                    return
+
+                import itertools
+                from matplotlib.animation import FuncAnimation
+
+                app.anim_paused = False
+                app.anim_frame = 0
+                try:
+                    app.anim_progress['value'] = 0
+                except Exception:
+                    pass
+
+                interval = app.anim_speed_var.get()
+
+                def wrapped(_):
+                    if app.anim_paused:
+                        return []
+                    app.anim_frame += 1
+                    try:
+                        app.anim_progress['value'] = (
+                            app.anim_frame % app.anim_frames_total)
+                    except Exception:
+                        pass
+                    return update(app.anim_frame)
+
+                app.current_animation = FuncAnimation(
+                    app.fig, wrapped, frames=itertools.count(),
+                    interval=interval, blit=False,
+                    cache_frame_data=False,
+                    save_count=app.anim_frames_total)
+                app.canvas.draw()
+
+            app._start_animation = patched_start
+            app._anim_patched = True
+
+    # ----- Шаблоны -----
+    if getattr(registry, 'templates', None):
+        if not getattr(app, '_templates_patched', False):
+            original_apply = app._apply_template
+            templates = registry.templates
+
+            def patched_apply(name):
+                if name not in templates:
+                    return original_apply(name)
+
+                from tkinter import messagebox
+                td = templates[name]
+                display = (td["display"].get(tr.lang)
+                           or td["display"].get("en")
+                           or name)
+
+                app._snapshot(f"Шаблон плагина: {display}")
+                app._clear_all_silent(keep_undo=True)
+
+                try:
+                    td["builder"](app)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                    messagebox.showerror(
+                        "Ошибка шаблона плагина",
+                        f"{display}\n\nСм. консоль для подробностей.")
+                    return
+
+                app._apply_canvas_settings()
+                app._update_listbox()
+                app._redraw()
+                app._show_history(f"Шаблон плагина: {display}")
+
+            app._apply_template = patched_apply
+            app._templates_patched = True
 
 __all__ = [
     'load_plugins', 'PluginRegistry', 'PluginAPI', 'ChartTypeDef',

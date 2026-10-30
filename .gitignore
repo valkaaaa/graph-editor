@@ -4,15 +4,16 @@ __pycache__/
 *$py.class
 *.so
 .Python
-
 *.egg-info/
 *.egg
 pip-log.txt
 pip-delete-this-directory.txt
 
+# ============ build output ============
 build/
 dist/
-docs/
+
+# ============ папка ignore ============
 ignore/
 
 # ============ Виртуальные окружения ============
@@ -53,3 +54,7 @@ desktop.ini
 # ============ Пользовательские темы и шаблоны ============
 ~/.grapheditor_themes/
 ~/.grapheditor_templates/
+
+# ============ Сайт документации ============
+docs/
+mkdocs.yml
