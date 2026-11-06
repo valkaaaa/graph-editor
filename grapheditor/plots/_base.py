@@ -132,9 +132,9 @@ class BasePlotsMixin:
             return
         current = getattr(self.axes[0], 'name', 'rectilinear')
         need_rebuild = (
-            (projection == '3d' and current != '3d') or
-            (projection == 'polar' and current != 'polar') or
-            (projection == '2d' and current != 'rectilinear')
+                (projection == '3d' and current != '3d') or
+                (projection == 'polar' and current != 'polar') or
+                (projection == '2d' and current != 'rectilinear')
         )
         if not need_rebuild:
             return
@@ -153,7 +153,8 @@ class BasePlotsMixin:
         self.axes = []
         n = self.subplot_rows * self.subplot_cols
         for i in range(n):
-            ax = self.fig.add_subplot(self.subplot_rows, self.subplot_cols,
+            ax = self.fig.add_subplot(self.subplot_rows,
+                                      self.subplot_cols,
                                       i + 1, **proj_kw)
             self.axes.append(ax)
         self.ax = self.axes[0]
@@ -166,9 +167,9 @@ class BasePlotsMixin:
             self.graphs_data = [
                 d for d in self.graphs_data
                 if "3D" not in d['type'] and d['type'] not in
-                ("Радиальная", "Полярный scatter",
-                 "Полярная теплокарта", "Роза ветров",
-                 "Диаграмма Тейлора", "Sunburst", "Radar chart")
+                   ("Радиальная", "Полярный scatter",
+                    "Полярная теплокарта", "Роза ветров",
+                    "Диаграмма Тейлора", "Sunburst", "Radar chart")
             ]
         elif projection == '3d':
             self.graphs_data = [d for d in self.graphs_data
@@ -180,6 +181,11 @@ class BasePlotsMixin:
             d['artist'] = self._create_artist(d)
         self._update_listbox()
         self.canvas.draw()
+
+        # Пересоздать selection brush, если он был включён
+        if (getattr(self, 'selection_brush_var', None)
+                and self.selection_brush_var.get()):
+            self._init_rect_selectors()
 
     # ========================================================================
     # УПРАВЛЕНИЕ ARTIST
@@ -275,10 +281,10 @@ class BasePlotsMixin:
         self.fig.clear()
         needs_3d = any("3D" in d['type'] for d in self.graphs_data)
         needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter",
-                                         "Полярная теплокарта",
-                                         "Роза ветров",
-                                         "Диаграмма Тейлора",
-                                         "Sunburst", "Radar chart")
+                                        "Полярная теплокарта",
+                                        "Роза ветров",
+                                        "Диаграмма Тейлора",
+                                        "Sunburst", "Radar chart")
                           for d in self.graphs_data)
         proj_kw = {}
         if needs_3d:
@@ -301,6 +307,11 @@ class BasePlotsMixin:
                 d['subplot_index'] = 0
             d['artist'] = self._create_artist(d)
         self.canvas.draw()
+
+        # Пересоздать selection brush, если он был включён
+        if (getattr(self, 'selection_brush_var', None)
+                and self.selection_brush_var.get()):
+            self._init_rect_selectors()
 
     def _get_axis(self, idx):
         if not self.axes:
@@ -376,27 +387,48 @@ class BasePlotsMixin:
             "real": np.real, "imag": np.imag, "angle": np.angle, "conj": np.conj,
 
             # --- Константы ---
-            "pi": np.pi, "e": np.e, "tau": np.tau, "inf": np.inf, "nan": np.nan,
+            "pi": np.pi, "e": np.e, "tau": 2 * np.pi, "inf": np.inf, "nan": np.nan,
 
             # --- Переменные ---
             "x": x_val, "y": y_val, "t": t_val,
         }
 
-        # Добавляем спецфункции из scipy (если установлен)
+        # ---------- Спецфункции ----------
+        # heaviside — всегда доступна через numpy, независимо от scipy
+        def _heaviside(x, h0=0.5):
+            """Функция Хевисайда. h0 — значение при x=0 (по умолчанию 0.5)."""
+            return np.heaviside(x, h0)
+
+        sd["heaviside"] = _heaviside
+
+        # Остальные спецфункции — только если scipy установлен
         try:
             from scipy import special as sp
-            sd.update({
-                "erf": sp.erf,            # Функция ошибок (интеграл Гаусса)
-                "erfc": sp.erfc,          # Дополнительная функция ошибок
-                "gamma": sp.gamma,        # Гамма-функция
-                "lgamma": sp.gammaln,     # Логарифм гамма-функции
-                "jv": sp.jv,              # Функция Бесселя первого рода (jv(n, x))
-                "yv": sp.yv,              # Функция Бесселя второго рода
-                "heaviside": sp.heaviside,# Функция Хевисайда (ступенька)
-                "airy": sp.airy,          # Функция Эйри
-            })
-        except ImportError:
-            pass  # Если scipy нет, просто пропускаем
+
+            # Добавляем только то, что точно есть
+            for name, attr in [
+                ("erf", "erf"),
+                ("erfc", "erfc"),
+                ("gamma", "gamma"),
+                ("lgamma", "gammaln"),
+                ("jv", "jv"),
+                ("yv", "yv"),
+            ]:
+                if hasattr(sp, attr):
+                    sd[name] = getattr(sp, attr)
+
+            # airy возвращает 4 значения (Ai, Ai', Bi, Bi');
+            # пользователю нужна только Ai(x)
+            if hasattr(sp, "airy"):
+                sd["airy"] = lambda x: sp.airy(x)[0]
+
+            # На случай, если sp.heaviside всё-таки есть (SciPy ≥1.12) —
+            # используем её (она может быть точнее на краях), иначе np-версия
+            if hasattr(sp, "heaviside"):
+                sd["heaviside"] = sp.heaviside
+
+        except (ImportError, AttributeError):
+            pass
 
         try:
             return eval(expr, {"__builtins__": {}}, sd)

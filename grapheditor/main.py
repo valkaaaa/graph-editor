@@ -199,6 +199,12 @@ class AdvancedGraphEditorApp(
         self.subplot_grid_var = tk.StringVar(value='1x1')
         self.subplot_index_var = tk.IntVar(value=0)
 
+        # ---------- Обработка сигналов ----------
+        self.savgol_window_var = tk.IntVar(value=11)
+        self.savgol_poly_var = tk.IntVar(value=2)
+        self.interp_method_var = tk.StringVar(value='cubic')
+        self.interp_n_var = tk.IntVar(value=500)
+
         # ---------- Конфиг ----------
         saved = load_config()
         if isinstance(saved.get('settings'), dict):

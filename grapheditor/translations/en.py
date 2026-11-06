@@ -655,4 +655,68 @@ TEXTS = {
     'stats.calc_title': 'Derivative / Integral',
     'stats.derivative_btn': 'd/dx',
     'stats.integral_btn': '∫ dx',
+
+    # --- Tour: extended steps ---
+    'tour.step2_title': 'Chart type',
+    'tour.step2_text':
+        'Over 130 chart types: from classic lines and bars to '
+        'Sankey, dendrograms, Smith charts and 3D surfaces. '
+        'Each type knows which fields it needs — they appear below.',
+
+    'tour.step3_title': 'Formula generator',
+    'tour.step3_text':
+        'Type a formula — sin(x), exp(-x/5), erf(x), gamma(x), '
+        'jv(0,x), cumsum(x) — and the app will create data. '
+        'The "?" button opens a reference of all functions. '
+        'Multiple formulas can be separated by ";".',
+
+    'tour.step4_title': 'Object tree',
+    'tour.step4_text':
+        'All your charts live here. Right-click — rename, group, '
+        'move to folder, reorder layers (z-order), hide, delete. '
+        'Double-click — load into the form for editing.',
+
+    'tour.step5_title': 'Statistics and analysis',
+    'tour.step5_text':
+        'Descriptive metrics (mean, median, std, IQR, correlation), '
+        'fits (linear, polynomial, exp, log, power with R² and RMSE), '
+        'peak detection, Savitzky-Golay filter, interpolation, '
+        'derivative and integral — all in one click.',
+
+    'tour.step6_title': 'Documents',
+    'tour.step6_text':
+        'Multiple tabs at once, like a browser. '
+        'Each document has its own subplot grid and its own set '
+        'of objects. "+" — new document, "✕" — close.',
+
+    'tour.step7_title': 'Animations',
+    'tour.step7_text':
+        '14 built-in animations: wave, pendulum, Lorenz attractor, '
+        'cellular automaton, 3D rotation. Custom functions via '
+        '"Custom function (2D/3D)". Export to GIF or MP4.',
+
+    'tour.step8_title': 'Canvas settings',
+    'tour.step8_text':
+        'Title and axis labels. LaTeX markup is supported: '
+        'write $\\sigma^2$ or $\\frac{a}{b}$ — it renders in '
+        'mathematical form.',
+
+    'tour.step9_title': 'Axis limits',
+    'tour.step9_text':
+        '"Auto" — matplotlib picks the bounds. '
+        'Or set manually: X from 0 to 10, Y from -1 to 1. '
+        'Useful for comparing two charts in the same scale.',
+
+    'tour.step10_title': 'Canvas tools',
+    'tour.step10_text':
+        'View menu → ruler (measure distance between two points), '
+        'rectangle selection (create object from region or save to CSV), '
+        'crosshair, drag points, tooltip on hover.',
+
+    'tour.step11_title': 'More to explore',
+    'tour.step11_text':
+        'DSL console (Ctrl+Alt+C) — text commands instead of clicks. '
+        'Plugins (~/.grapheditor_plugins) — custom chart types, themes, '
+        'animations. Templates — saved projects for reuse. '
+        'Hotkeys — Ctrl+/ in the menu.',
 }

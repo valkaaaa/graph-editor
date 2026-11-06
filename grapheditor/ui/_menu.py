@@ -243,6 +243,14 @@ class MenuUIMixin:
             variable=self.measure_var,
             command=self._toggle_measure)
 
+        # --- Выделение ---
+        if not hasattr(self, 'selection_brush_var'):
+            self.selection_brush_var = tk.BooleanVar(value=False)
+        self.viewmenu.add_checkbutton(
+            label="⬚ Выделение",
+            variable=self.selection_brush_var,
+            command=self._toggle_selection_brush)
+
         self.viewmenu.add_separator()
         self.viewmenu.add_checkbutton(
             label=tr.t('menu.view.panel_settings'),

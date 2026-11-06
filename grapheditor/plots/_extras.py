@@ -400,6 +400,109 @@ class ExtrasMixin:
                 parent = folder_nodes.get(folder, '')
                 tree.insert(parent, 'end', text=text, values=(i,))
 
+    def _refresh_stats(self):
+        """Обновляет вкладку «Статистика» по первому выбранному объекту.
+
+        Вызывается из _add_graph/_update_graph/_delete_graph/
+        _add_plugin_graph/_clear_all_silent/_switch_document/
+        двойного клика по дереву.
+        """
+        if not hasattr(self, 'stats_vars'):
+            return
+
+        sel = self._get_selected_indices()
+
+        # Нет выделения — сброс
+        if not sel or not (0 <= sel[0] < len(self.graphs_data)):
+            if hasattr(self, 'stats_label'):
+                try:
+                    self.stats_label.config(
+                        text=tr.t('stats.none_selected'))
+                except Exception:
+                    pass
+            for v in self.stats_vars.values():
+                v.set('—')
+            if hasattr(self, 'fit_result_var'):
+                self.fit_result_var.set('')
+            return
+
+        data = self.graphs_data[sel[0]]
+
+        # Заголовок: имя + тип
+        if hasattr(self, 'stats_label'):
+            try:
+                self.stats_label.config(
+                    text=f"{data.get('label', '?')} — "
+                         f"{tr.type_name(data['type'])}")
+            except Exception:
+                pass
+
+        # Числовые значения — из Y
+        try:
+            arr = np.asarray(data.get('y', []), dtype=float)
+            arr = arr[np.isfinite(arr)]
+        except (TypeError, ValueError):
+            arr = np.array([])
+
+        if arr.size == 0:
+            for v in self.stats_vars.values():
+                v.set('—')
+            if hasattr(self, 'fit_result_var'):
+                self.fit_result_var.set('')
+            return
+
+        def _fmt(v):
+            try:
+                f = float(v)
+                if not np.isfinite(f):
+                    return '—'
+                return f"{f:.4g}"
+            except (TypeError, ValueError):
+                return '—'
+
+        try:
+            self.stats_vars['n'].set(str(int(arr.size)))
+            self.stats_vars['min'].set(_fmt(arr.min()))
+            self.stats_vars['max'].set(_fmt(arr.max()))
+            self.stats_vars['mean'].set(_fmt(arr.mean()))
+            self.stats_vars['median'].set(_fmt(np.median(arr)))
+
+            if arr.size > 1:
+                std = float(arr.std(ddof=1))
+                var = float(arr.var(ddof=1))
+            else:
+                std = var = 0.0
+            self.stats_vars['std'].set(_fmt(std))
+            self.stats_vars['var'].set(_fmt(var))
+
+            q1 = float(np.percentile(arr, 25))
+            q3 = float(np.percentile(arr, 75))
+            self.stats_vars['q1'].set(_fmt(q1))
+            self.stats_vars['q3'].set(_fmt(q3))
+            self.stats_vars['iqr'].set(_fmt(q3 - q1))
+            self.stats_vars['sum'].set(_fmt(arr.sum()))
+
+            # Корреляция Пирсона X↔Y
+            corr_text = '—'
+            try:
+                xarr = np.asarray(data.get('x', []), dtype=float)
+                n = min(xarr.size, arr.size)
+                if n >= 2:
+                    x_slice = xarr[:n]
+                    y_slice = arr[:n]
+                    x_ok = np.isfinite(x_slice)
+                    if x_ok.sum() >= 2:
+                        corr = float(np.corrcoef(
+                            x_slice[x_ok], y_slice[x_ok])[0, 1])
+                        if np.isfinite(corr):
+                            corr_text = _fmt(corr)
+            except (TypeError, ValueError):
+                pass
+            self.stats_vars['corr'].set(corr_text)
+        except Exception:
+            for v in self.stats_vars.values():
+                v.set('—')
+
     # ========================================================================
     # ПЕРЕРИСОВКА
     # ========================================================================

@@ -13,6 +13,32 @@ class BuildUIMixin:
     # UI — СБОРКА
     # ========================================================================
     def _build_ui(self):
+        # ---------- Статус-бар ----------
+        statusbar = ttk.Frame(self.root, relief=tk.SUNKEN)
+        statusbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.perf_var = tk.StringVar(value='')
+        ttk.Label(statusbar, textvariable=self.status_var, anchor=tk.W,
+                  padding=(5, 2)).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Separator(statusbar, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=5)
+        ttk.Label(statusbar, textvariable=self.history_var, anchor=tk.W,
+                  padding=(5, 2), foreground="#008000").pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        console_btn = ttk.Button(statusbar, text="🐍 Python", width=12,
+                                 command=self._open_console)
+        console_btn.pack(side=tk.RIGHT, padx=5, pady=1)
+        attach_tooltip(console_btn, "Открыть Python-консоль (Ctrl+`)")
+
+        dsl_btn = ttk.Button(statusbar, text="⌨️ DSL", width=10,
+                             command=self._open_dsl_console)
+        dsl_btn.pack(side=tk.RIGHT, padx=5, pady=1)
+        attach_tooltip(dsl_btn, "Открыть DSL-консоль (Ctrl+Alt+C)")
+
+        ttk.Label(statusbar, textvariable=self.perf_var,
+                  anchor=tk.E, padding=(5, 2),
+                  foreground="#888").pack(side=tk.RIGHT, padx=5)
+
         tb = ttk.Frame(self.root, padding=2)
         tb.pack(side=tk.TOP, fill=tk.X)
 
@@ -594,32 +620,6 @@ class BuildUIMixin:
                                 self._on_plot_tab_changed)
         self._build_documents_bar(right_frame)
         self.plot_frame = None
-
-        # ---------- Статус-бар ----------
-        statusbar = ttk.Frame(self.root, relief=tk.SUNKEN)
-        statusbar.pack(side=tk.BOTTOM, fill=tk.X)
-        self.perf_var = tk.StringVar(value='')
-        ttk.Label(statusbar, textvariable=self.status_var, anchor=tk.W,
-                  padding=(5, 2)).pack(
-            side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Separator(statusbar, orient=tk.VERTICAL).pack(
-            side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Label(statusbar, textvariable=self.history_var, anchor=tk.W,
-                  padding=(5, 2), foreground="#008000").pack(
-            side=tk.LEFT, fill=tk.X, expand=True)
-        console_btn = ttk.Button(statusbar, text="🐍 Python", width=12,
-                                 command=self._open_console)
-        console_btn.pack(side=tk.RIGHT, padx=5, pady=1)
-        attach_tooltip(console_btn, "Открыть Python-консоль (Ctrl+`)")
-
-        dsl_btn = ttk.Button(statusbar, text="⌨️ DSL", width=10,
-                             command=self._open_dsl_console)
-        dsl_btn.pack(side=tk.RIGHT, padx=5, pady=1)
-        attach_tooltip(dsl_btn, "Открыть DSL-консоль (Ctrl+Alt+C)")
-
-        ttk.Label(statusbar, textvariable=self.perf_var,
-                  anchor=tk.E, padding=(5, 2),
-                  foreground="#888").pack(side=tk.RIGHT, padx=5)
 
     # ========================================================================
     # ПОЛЯ ВВОДА

@@ -1332,16 +1332,17 @@ class DialogsUIMixin:
     def _start_onboarding(self):
         self._onboarding_step = 0
         self._onboarding_widgets = [
-            (self.notebook, 'tour.step1_title',
-             'tour.step1_text'),
-            (self.graph_tree, 'tour.step2_title',
-             'tour.step2_text'),
-            (self.plot_frame, 'tour.step3_title',
-             'tour.step3_text'),
-            (self.anim_labelframe, 'tour.step4_title',
-             'tour.step4_text'),
-            (self.plot_frame, 'tour.step5_title',
-             'tour.step5_text'),
+            (self.notebook, 'tour.step1_title', 'tour.step1_text'),
+            (self.type_combo, 'tour.step2_title', 'tour.step2_text'),
+            (self.gen_expr, 'tour.step3_title', 'tour.step3_text'),
+            (self.graph_tree, 'tour.step4_title', 'tour.step4_text'),
+            (self.stats_frame, 'tour.step5_title', 'tour.step5_text'),
+            (self.plot_notebook, 'tour.step6_title', 'tour.step6_text'),
+            (self.anim_labelframe, 'tour.step7_title', 'tour.step7_text'),
+            (self.settings_frame, 'tour.step8_title', 'tour.step8_text'),
+            (self.limits_frame, 'tour.step9_title', 'tour.step9_text'),
+            (self.plot_frame, 'tour.step10_title', 'tour.step10_text'),
+            (self.notebook, 'tour.step11_title', 'tour.step11_text'),
         ]
         self._show_onboarding_step()
 

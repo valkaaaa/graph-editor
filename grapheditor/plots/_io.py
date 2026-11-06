@@ -348,7 +348,278 @@ class IOMixin:
             self._measure_pt1 = None
             self.canvas.draw_idle()
 
+    # ========================================================================
+    # ВЫДЕЛЕНИЕ ПРЯМОУГОЛЬНИКОМ (SELECTION BRUSH)
+    # ========================================================================
+    def _toggle_selection_brush(self):
+        """Включить/выключить режим выделения прямоугольником."""
+        enabled = getattr(self, 'selection_brush_var', None)
+        if enabled is None:
+            return
+        enabled = enabled.get()
+
+        if enabled:
+            # Взаимоисключение с drag / линейкой
+            try:
+                if self.drag_points_enabled.get():
+                    self.drag_points_enabled.set(False)
+            except Exception:
+                pass
+            try:
+                if getattr(self, 'measure_var', None) and self.measure_var.get():
+                    self.measure_var.set(False)
+                    self._toggle_measure()
+            except Exception:
+                pass
+            self._init_rect_selectors()
+            self.status_var.set(
+                "Выделение: тяните мышью, чтобы выбрать область")
+        else:
+            self._remove_rect_selectors()
+            self.status_var.set(tr.t('status.ready'))
+
+    def _init_rect_selectors(self):
+        """Создаёт RectangleSelector для каждой оси."""
+        try:
+            from matplotlib.widgets import RectangleSelector
+        except ImportError:
+            messagebox.showerror(
+                tr.t('msg.error'),
+                "Требуется matplotlib >= 3.7")
+            return
+
+        self._remove_rect_selectors()
+        self._rect_selectors = []
+
+        for ax in self.axes:
+            try:
+                rs = RectangleSelector(
+                    ax,
+                    self._on_rect_selected,
+                    useblit=True,
+                    button=[1],
+                    minspanx=3, minspany=3,
+                    spancoords='pixels',
+                    interactive=False,
+                    props=dict(
+                        facecolor='#ffe066',
+                        alpha=0.25,
+                        edgecolor='#d97706',
+                        linewidth=1.5,
+                    ),
+                )
+                rs.set_active(True)
+                self._rect_selectors.append(rs)
+            except Exception:
+                continue
+
+        self.canvas.draw_idle()
+
+    def _remove_rect_selectors(self):
+        """Убирает все RectangleSelector с осей."""
+        selectors = getattr(self, '_rect_selectors', [])
+        for rs in selectors:
+            try:
+                rs.set_active(False)
+                rs.disconnect_events()
+            except Exception:
+                pass
+        self._rect_selectors = []
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _on_rect_selected(self, eclick, erelease):
+        """Обработчик завершения выделения."""
+        x1, y1 = eclick.xdata, eclick.ydata
+        x2, y2 = erelease.xdata, erelease.ydata
+        if None in (x1, y1, x2, y2):
+            return
+        xmin, xmax = sorted([x1, x2])
+        ymin, ymax = sorted([y1, y2])
+
+        ax = eclick.inaxes
+        if ax is None:
+            return
+        subplot_idx = self.axes.index(ax) if ax in self.axes else 0
+
+        selected_objects = []
+        for i, d in enumerate(self.graphs_data):
+            if d.get('subplot_index', 0) != subplot_idx:
+                continue
+            if d['type'] not in ("Линия", "Точечная"):
+                continue
+            xs = d.get('x', [])
+            ys = d.get('y', [])
+            inside_indices = []
+            for j, (xi, yi) in enumerate(zip(xs, ys)):
+                try:
+                    if xmin <= xi <= xmax and ymin <= yi <= ymax:
+                        inside_indices.append(j)
+                except (TypeError, ValueError):
+                    continue
+            if inside_indices:
+                selected_objects.append((i, inside_indices))
+
+        if not selected_objects:
+            self.status_var.set(
+                f"В области нет точек")
+            return
+
+        total_points = sum(len(idxs) for _, idxs in selected_objects)
+        self._show_rect_action_dialog(
+            xmin, xmax, ymin, ymax,
+            selected_objects, total_points)
+
+    def _show_rect_action_dialog(self, xmin, xmax, ymin, ymax,
+                                  selected, total_points):
+        """Диалог выбора действия с выделенными точками."""
+        win = tk.Toplevel(self.root)
+        win.title("Выделенная область")
+        win.transient(self.root)
+        win.geometry("440x320")
+        win.bind('<Escape>', lambda e: win.destroy())
+
+        info = (
+            f"Область:\n"
+            f"  X: {xmin:.4g} … {xmax:.4g}\n"
+            f"  Y: {ymin:.4g} … {ymax:.4g}\n\n"
+            f"Найдено: {total_points} точек\n"
+            f"в {len(selected)} объектах"
+        )
+        ttk.Label(win, text=info, justify=tk.LEFT,
+                  font=('Consolas', 10), padding=10
+                  ).pack(anchor=tk.W)
+
+        bf = ttk.Frame(win, padding=10)
+        bf.pack(fill=tk.BOTH, expand=True)
+
+        def do_create_new():
+            self._snapshot(f"Выделение: {total_points} точек")
+            for obj_idx, idxs in selected:
+                src = self.graphs_data[obj_idx]
+                xs = [src['x'][j] for j in idxs]
+                ys = [src['y'][j] for j in idxs]
+                self.line_counter += 1
+                d = self._default_data(
+                    'Точечная', xs, ys,
+                    label=f"{src['label']} [выделено]",
+                    color=src.get('color', 'blue'),
+                    ms=src.get('ms', 6.0) * 1.3,
+                    subplot_index=src.get('subplot_index', 0))
+                d['artist'] = self._create_artist(d)
+                self.graphs_data.append(d)
+            self._update_listbox()
+            self._redraw()
+            self._show_history(
+                f"Выделено: {total_points} точек")
+            win.destroy()
+
+        def do_save_csv():
+            path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV", "*.csv")],
+                initialfile="selection.csv")
+            if not path:
+                return
+            try:
+                import csv as _csv
+                with open(path, 'w', newline='',
+                          encoding='utf-8') as f:
+                    w = _csv.writer(f)
+                    w.writerow(["object", "X", "Y"])
+                    for obj_idx, idxs in selected:
+                        src = self.graphs_data[obj_idx]
+                        for j in idxs:
+                            w.writerow([
+                                src['label'],
+                                src['x'][j],
+                                src['y'][j]])
+                self._show_history(
+                    f"Сохранено: {os.path.basename(path)}")
+                win.destroy()
+            except Exception as e:
+                messagebox.showerror(tr.t('msg.error'), str(e))
+
+        def do_save_json():
+            path = filedialog.asksaveasfilename(
+                defaultextension=".json",
+                filetypes=[("JSON", "*.json")],
+                initialfile="selection.json")
+            if not path:
+                return
+            try:
+                payload = []
+                for obj_idx, idxs in selected:
+                    src = self.graphs_data[obj_idx]
+                    payload.append({
+                        'label': src['label'],
+                        'type': src['type'],
+                        'x': [src['x'][j] for j in idxs],
+                        'y': [src['y'][j] for j in idxs],
+                    })
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(payload, f,
+                              ensure_ascii=False, indent=2)
+                self._show_history(
+                    f"Сохранено: {os.path.basename(path)}")
+                win.destroy()
+            except Exception as e:
+                messagebox.showerror(tr.t('msg.error'), str(e))
+
+        def do_stats_only():
+            """Показать статистику только по выделенным точкам."""
+            all_x = []
+            all_y = []
+            for obj_idx, idxs in selected:
+                src = self.graphs_data[obj_idx]
+                all_x.extend([src['x'][j] for j in idxs])
+                all_y.extend([src['y'][j] for j in idxs])
+            arr = np.array(all_y, dtype=float)
+            arr = arr[np.isfinite(arr)]
+            if arr.size == 0:
+                win.destroy()
+                return
+            text = (
+                f"Статистика выделения:\n"
+                f"  n = {arr.size}\n"
+                f"  min = {arr.min():.4g}\n"
+                f"  max = {arr.max():.4g}\n"
+                f"  mean = {arr.mean():.4g}\n"
+                f"  median = {np.median(arr):.4g}\n"
+                f"  std = {arr.std(ddof=1) if arr.size > 1 else 0:.4g}"
+            )
+            messagebox.showinfo(
+                "Статистика выделения", text)
+            win.destroy()
+
+        ttk.Button(
+            bf, text="➕  Создать объекты из выделения",
+            command=do_create_new
+        ).pack(fill=tk.X, pady=2)
+        ttk.Button(
+            bf, text="📊  Показать статистику выделения",
+            command=do_stats_only
+        ).pack(fill=tk.X, pady=2)
+        ttk.Button(
+            bf, text="💾  Сохранить как CSV",
+            command=do_save_csv
+        ).pack(fill=tk.X, pady=2)
+        ttk.Button(
+            bf, text="💾  Сохранить как JSON",
+            command=do_save_json
+        ).pack(fill=tk.X, pady=2)
+        ttk.Button(
+            bf, text="Отмена",
+            command=win.destroy
+        ).pack(fill=tk.X, pady=(10, 0))
+
     def _on_press_measure(self, event):
+        # Если включено выделение прямоугольником — не мешаем ему
+        if (getattr(self, 'selection_brush_var', None)
+                and self.selection_brush_var.get()):
+            return
         if not getattr(self, 'measure_mode', False):
             return
         if event.inaxes is None or event.xdata is None:
@@ -369,11 +640,15 @@ class IOMixin:
 
         # Удаляем старую линию
         if hasattr(self, '_measure_artist') and self._measure_artist:
-            try: self._measure_artist.remove()
-            except: pass
+            try:
+                self._measure_artist.remove()
+            except Exception:
+                pass
         if hasattr(self, '_measure_text') and self._measure_text:
-            try: self._measure_text.remove()
-            except: pass
+            try:
+                self._measure_text.remove()
+            except Exception:
+                pass
 
         ax = event.inaxes
         dx = x2 - x1
@@ -392,8 +667,10 @@ class IOMixin:
 
         self._measure_text = ax.text(
             mid_x, mid_y, text,
-            bbox=dict(boxstyle="round", fc="white", ec="red", alpha=0.9),
-            fontsize=9, ha='center', va='center', color='red', zorder=1000
+            bbox=dict(boxstyle="round", fc="white", ec="red",
+                      alpha=0.9),
+            fontsize=9, ha='center', va='center', color='red',
+            zorder=1000
         )
 
         self._measure_pt1 = None  # Сброс
@@ -934,6 +1211,10 @@ class IOMixin:
     # DRAG ТОЧЕК МЫШЬЮ
     # ========================================================================
     def _on_press_drag(self, event):
+        # Если включено выделение прямоугольником — не мешаем ему
+        if (getattr(self, 'selection_brush_var', None)
+                and self.selection_brush_var.get()):
+            return
         if not self.drag_points_enabled.get():
             return
         if event.button != 1 or event.inaxes is None:
