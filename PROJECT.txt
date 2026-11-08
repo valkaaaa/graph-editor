@@ -80,6 +80,7 @@ project:
     EXAMPLES.txt;
     LICENSE.txt;
     PROJECT.txt;
+    index.html
     pyproject.toml;
     README.md;
     requirements.txt;
