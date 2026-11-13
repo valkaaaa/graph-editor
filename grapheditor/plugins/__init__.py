@@ -398,7 +398,8 @@ def _patch_app_methods(app, registry):
                 app._stop_animation()
                 app.fig.clear()
 
-                is_3d = '3D' in at
+                disp_name = animations[at]["display"].get(tr.lang, "") or animations[at]["display"].get("en", "")
+                is_3d = '3d' in str(at).lower() or '3d' in str(disp_name).lower()
                 app.axes = []
                 if is_3d:
                     app.ax = app.fig.add_subplot(111, projection='3d')

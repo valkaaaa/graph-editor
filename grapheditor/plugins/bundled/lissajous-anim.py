@@ -25,7 +25,6 @@ def create_lissajous(app, ax):
 
     t = np.linspace(0, 2 * np.pi, 500)
 
-    # ЭТА ФУНКЦИЯ БУДЕТ ВЫЗЫВАТЬСЯ ДЛЯ КАЖДОГО КАДРА
     def update(frame):
         # Меняем частоты (a и b) каждые 100 кадров
         a = 1 + (frame // 100) % 5
