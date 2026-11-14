@@ -1,10 +1,5 @@
-import tkinter as tk
+import tkinter as tk, matplotlib, matplotlib.colors as mcolors, matplotlib.pyplot as plt
 from tkinter import ttk, messagebox
-
-import matplotlib
-import matplotlib.colors as mcolors
-import matplotlib.pyplot as plt
-
 from translator import tr
 
 

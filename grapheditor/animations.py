@@ -1,6 +1,4 @@
-import itertools
-
-import numpy as np
+import itertools, numpy as np
 
 from tkinter import messagebox, filedialog
 from matplotlib.animation import FuncAnimation

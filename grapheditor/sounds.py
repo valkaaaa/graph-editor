@@ -3,8 +3,7 @@
 На Linux/macOS `winsound` отсутствует — звук автоматически
 отключается, приложение работает без него.
 """
-import os
-import sys
+import os, sys
 
 try:
     import winsound

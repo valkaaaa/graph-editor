@@ -1,7 +1,4 @@
-import os
-import sys
-import logging
-import traceback
+import os, sys, logging, traceback
 from logging.handlers import RotatingFileHandler
 
 

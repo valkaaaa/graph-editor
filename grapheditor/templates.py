@@ -1,14 +1,5 @@
-import json
-import os
-import re
-import sys
-import datetime
-
-import numpy as np
-
-import tkinter as tk
+import json, os, re, sys, datetime, numpy as np, tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-
 from translator import tr
 from settings import APP_NAME, APP_VERSION
 

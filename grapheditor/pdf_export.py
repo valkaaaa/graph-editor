@@ -1,9 +1,6 @@
-import os
-import tkinter as tk
+import os, tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-
 from translator import tr
-
 
 PAGE_SIZES_MM = {
     'A3':     (297, 420),

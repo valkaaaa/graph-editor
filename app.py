@@ -1,5 +1,4 @@
-import os
-import sys
+import os, sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PKG = os.path.join(ROOT, 'grapheditor')

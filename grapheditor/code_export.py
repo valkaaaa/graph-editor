@@ -1,11 +1,6 @@
-import os
-import tkinter as tk
+import os, tkinter as tk, numpy as np
 from tkinter import filedialog, messagebox
-
-import numpy as np
-
 from translator import tr
-
 
 class CodeExportMixin:
 

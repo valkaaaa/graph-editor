@@ -7,15 +7,8 @@
   - автоматически при старте (_check_autosave_on_start);
   - вручную — перетаскиванием .graphxtemp в окно (_on_drop).
 """
-import datetime
-import json
-import logging
-import os
-import tempfile
-import zipfile
-
+import datetime, json, logging, os, tempfile, zipfile
 from tkinter import messagebox
-
 from config import config_dir
 
 

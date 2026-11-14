@@ -1,7 +1,6 @@
 """Авто-переключение темы по времени суток."""
 import datetime
 
-
 class AutoThemeMixin:
 
     def _init_auto_theme(self):

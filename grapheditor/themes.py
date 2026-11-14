@@ -1,12 +1,5 @@
-import os
-import re
-import json
-import tkinter as tk
+import os, re, json, tkinter as tk, matplotlib.pyplot as plt, matplotlib as mpl
 from tkinter import ttk
-
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-
 
 # ============================================================================
 # ВСТРОЕННЫЕ ТЕМЫ

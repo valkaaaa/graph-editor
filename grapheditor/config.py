@@ -1,6 +1,5 @@
 import os, json
 
-
 def config_dir():
     d = os.path.expanduser("~/.grapheditor")
     os.makedirs(d, exist_ok=True)

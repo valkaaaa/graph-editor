@@ -1,10 +1,7 @@
 """Копирование / вставка / вырезание объектов между документами."""
-import copy
-import tkinter as tk
+import copy, tkinter as tk
 from tkinter import ttk
-
 from translator import tr
-
 
 class ClipboardMixin:
 

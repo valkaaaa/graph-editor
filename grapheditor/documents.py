@@ -1,5 +1,4 @@
-import os
-import tkinter as tk
+import os, tkinter as tk
 from tkinter import ttk, messagebox
 
 

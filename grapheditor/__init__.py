@@ -1,6 +1,5 @@
 """/grapheditor/__init__.py"""
-import os
-import sys
+import os, sys
 
 # Поддержка bare-импортов внутри пакета:
 #   from translator import tr

@@ -1,7 +1,6 @@
 """Редактируемые горячие клавиши + диалог настройки."""
 import tkinter as tk
 from tkinter import ttk, messagebox
-
 from translator import tr
 
 
