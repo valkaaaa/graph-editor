@@ -292,11 +292,21 @@ class AdvancedGraphEditorApp(
                 if ans is True:
                     self._switch_document(i)
                     self._save_json()
-        try:
-            self._save_config()
-        except Exception:
-            pass
-        self.root.destroy()
+        try: self._save_config()
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка сохранения: {e}")
+        finally:
+            try: self._stop_web_server()
+            except Exception as e:
+                messagebox.showerror("Ошибка",
+                                     f"Непредвиденная ошибка: {e}")
+            try:
+                self._save_config()
+                self._do_autosave()
+            except Exception:
+                messagebox.showerror("Ошибка",
+                                     f"Ошибка автосохранения: {e}")
+            self.root.destroy()
 
     def _save_config(self):
         save_config({
@@ -338,7 +348,7 @@ def main():
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "GraphEditorPro.1.5.0")
+                "GraphEditorPro.1.6.0")
         except Exception as e:
             print(e)
 

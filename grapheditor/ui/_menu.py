@@ -15,6 +15,11 @@ from translator import tr, INTERNAL_TYPES
 from themes import (THEMES, THEME_KEYS, is_custom_theme,
                     save_custom_theme, delete_custom_theme,
                     theme_key_from_name)
+import threading
+import socket
+import functools
+import webbrowser
+import http.server
 
 
 class MenuUIMixin:
@@ -78,6 +83,12 @@ class MenuUIMixin:
         self.filemenu.add_command(label="DSL-справочник",
                                   command=self._show_dsl_help)
 
+        self.filemenu.add_separator()
+        self.filemenu.add_command(label=tr.t('menu.file.console'),
+                                  accelerator="Ctrl+`",
+                                  command=self._open_console)
+        self.filemenu.add_command(label="🌐 Веб-версия...",
+                                  command=self._open_web_version)
         self.filemenu.add_separator()
         self.filemenu.add_command(label=tr.t('menu.file.tour'),
                                   command=self._start_onboarding)
@@ -538,3 +549,93 @@ class MenuUIMixin:
             messagebox.showinfo(tr.t('msg.info'), msg)
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
+
+    def _open_web_version(self):
+        """Запускает локальный HTTP-сервер для папки web/ и открывает браузер.
+
+        Это нужно потому, что Pyodide (WebAssembly) требует HTTP-протокол —
+        из file:// браузер заблокирует загрузку .wasm и .whl файлов.
+        """
+        # --- 1. Ищем index.html ---
+        if getattr(sys, 'frozen', False):
+            base = getattr(sys, '_MEIPASS',
+                           os.path.dirname(sys.executable))
+        else:
+            here = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(here))
+            base = project_root
+
+        candidates = [
+            os.path.join(base, 'grapheditor', 'web', 'index.html'),
+            os.path.join(base, 'web', 'index.html'),
+        ]
+        html_path = next((p for p in candidates
+                          if os.path.exists(p)), None)
+
+        if html_path is None:
+            messagebox.showerror(
+                "Веб-версия",
+                "Файл не найден:\n"
+                "  grapheditor/web/index.html\n"
+                "  web/index.html")
+            return
+
+        web_dir = os.path.dirname(html_path)
+
+        # --- 2. Если сервер уже запущен — просто открываем браузер ---
+        existing = getattr(self, '_web_server', None)
+        if existing is not None:
+            try:
+                port = existing.server_address[1]
+                webbrowser.open(f"http://127.0.0.1:{port}/index.html")
+                return
+            except Exception:
+                self._web_server = None  # сервер умер, запустим заново
+
+        # --- 3. Находим свободный порт ---
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            port = s.getsockname()[1]
+
+        # --- 4. Создаём HTTP-сервер, отключаем логи в консоль ---
+        class QuietHandler(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                pass  # не засоряем stdout
+
+        handler = functools.partial(QuietHandler, directory=web_dir)
+
+        try:
+            server = http.server.HTTPServer(
+                ('127.0.0.1', port), handler)
+        except OSError as e:
+            messagebox.showerror(
+                "Веб-версия",
+                f"Не удалось запустить локальный сервер:\n{e}")
+            return
+
+        # --- 5. Запускаем сервер в фоновом потоке ---
+        thread = threading.Thread(
+            target=server.serve_forever, daemon=True)
+        thread.start()
+
+        self._web_server = server
+        self._web_thread = thread
+
+        # --- 6. Открываем браузер ---
+        webbrowser.open(f"http://127.0.0.1:{port}/index.html")
+
+        self._show_history(
+            f"Веб-версия: http://127.0.0.1:{port}/index.html")
+
+    def _stop_web_server(self):
+        """Останавливает локальный HTTP-сервер (вызывается при закрытии)."""
+        server = getattr(self, '_web_server', None)
+        if server is None:
+            return
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception:
+            pass
+        self._web_server = None
+        self._web_thread = None
