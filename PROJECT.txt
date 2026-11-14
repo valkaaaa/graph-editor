@@ -57,7 +57,11 @@ project:
             _menu.py;
             _tree.py;
         web:
-            index.html
+            assets:
+                icon.png;
+            index.html;
+            script.js;
+            style.css;
         __init__.py;
         animations.py;
         autosave.py;
