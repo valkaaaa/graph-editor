@@ -385,14 +385,6 @@ TEXTS = {
     'grid.3x3': '3×3',
     'tour.step1_title': 'Creating a chart',
     'tour.step1_text': 'Choose a type, enter data, adjust the appearance.',
-    'tour.step2_title': 'Object list',
-    'tour.step2_text': 'All created charts. Double-click to edit, right-click for actions.',
-    'tour.step3_title': 'Canvas',
-    'tour.step3_text': 'The chart is rendered here. Mouse, zoom, and tooltip work automatically.',
-    'tour.step4_title': 'Animation engine',
-    'tour.step4_text': 'Choose animation type, adjust speed, and press ▶ Start.',
-    'tour.step5_title': 'Status bar',
-    'tour.step5_text': 'On the left — mouse coordinates. On the right — recent actions.',
     'stats.title': 'Object analysis',
     'stats.n': 'Points:',
     'stats.min': 'Min:',
@@ -657,32 +649,6 @@ TEXTS = {
     'stats.integral_btn': '∫ dx',
 
     # --- Tour: extended steps ---
-    'tour.step2_title': 'Chart type',
-    'tour.step2_text':
-        'Over 130 chart types: from classic lines and bars to '
-        'Sankey, dendrograms, Smith charts and 3D surfaces. '
-        'Each type knows which fields it needs — they appear below.',
-
-    'tour.step3_title': 'Formula generator',
-    'tour.step3_text':
-        'Type a formula — sin(x), exp(-x/5), erf(x), gamma(x), '
-        'jv(0,x), cumsum(x) — and the app will create data. '
-        'The "?" button opens a reference of all functions. '
-        'Multiple formulas can be separated by ";".',
-
-    'tour.step4_title': 'Object tree',
-    'tour.step4_text':
-        'All your charts live here. Right-click — rename, group, '
-        'move to folder, reorder layers (z-order), hide, delete. '
-        'Double-click — load into the form for editing.',
-
-    'tour.step5_title': 'Statistics and analysis',
-    'tour.step5_text':
-        'Descriptive metrics (mean, median, std, IQR, correlation), '
-        'fits (linear, polynomial, exp, log, power with R² and RMSE), '
-        'peak detection, Savitzky-Golay filter, interpolation, '
-        'derivative and integral — all in one click.',
-
     'tour.step6_title': 'Documents',
     'tour.step6_text':
         'Multiple tabs at once, like a browser. '
@@ -719,4 +685,14 @@ TEXTS = {
         'Plugins (~/.grapheditor_plugins) — custom chart types, themes, '
         'animations. Templates — saved projects for reuse. '
         'Hotkeys — Ctrl+/ in the menu.',
+
+    'type.text': 'Текст',
+
+    # --- Help ---
+    'menu.help': 'Help',
+    'menu.help.charts': '📚 Chart Types Reference',
+    'menu.help.formulas': '📐 Formula Reference',
+    'menu.help.dsl': '⌨️ DSL Reference',
+    'menu.help.about': 'ℹ️ About',
+    'hotkey.help': 'Open help',
 }

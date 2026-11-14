@@ -1419,3 +1419,285 @@ class DialogsUIMixin:
 
     def _finish_onboarding(self):
         self._show_history(tr.t('status.tour_finished'))
+
+    def _show_chart_help(self):
+        """Справочник типов графиков с примерами данных."""
+        try:
+            from settings import CHART_EXAMPLES
+        except ImportError:
+            from grapheditor.settings import CHART_EXAMPLES
+
+        win = tk.Toplevel(self.root)
+        win.title("📚 Справочник типов графиков")
+        win.geometry("960x640")
+        win.transient(self.root)
+        win.bind('<Escape>', lambda e: win.destroy())
+
+        # ---------- Поиск ----------
+        top = ttk.Frame(win, padding=(10, 10, 10, 5))
+        top.pack(fill=tk.X)
+        ttk.Label(top, text="🔍 Поиск:").pack(side=tk.LEFT)
+        search_var = tk.StringVar()
+        ttk.Entry(top, textvariable=search_var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        # ---------- Splitter: слева дерево, справа инфо ----------
+        paned = ttk.PanedWindow(win, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        left_frame = ttk.Frame(paned)
+        paned.add(left_frame, weight=1)
+
+        tree = ttk.Treeview(left_frame, show='tree', selectmode='browse')
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(left_frame, orient=tk.VERTICAL,
+                             command=tree.yview)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.configure(yscrollcommand=vsb.set)
+
+        right_frame = ttk.Frame(paned, padding=10)
+        paned.add(right_frame, weight=2)
+
+        title_lbl = tk.Label(right_frame, text="",
+                              font=('Arial', 15, 'bold'),
+                              anchor='w', fg='#4f46e5')
+        title_lbl.pack(fill=tk.X, pady=(0, 5))
+
+        desc_lbl = tk.Label(right_frame, text="",
+                             font=('Arial', 10), anchor='w',
+                             justify='left', wraplength=550)
+        desc_lbl.pack(fill=tk.X, pady=(0, 8))
+
+        fields_lbl = tk.Label(right_frame, text="",
+                               font=('Arial', 9), anchor='w',
+                               fg='#666')
+        fields_lbl.pack(fill=tk.X, pady=(0, 10))
+
+        ex_frame = ttk.LabelFrame(right_frame,
+                                   text="Пример данных",
+                                   padding=8)
+        ex_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        example_text = tk.Text(ex_frame, height=10, wrap='word',
+                                font=('Consolas', 9),
+                                bg='#f8f8f8', relief='flat')
+        example_text.pack(fill=tk.BOTH, expand=True)
+        example_text.configure(state='disabled')
+
+        hint_lbl = tk.Label(right_frame, text="",
+                             font=('Arial', 9, 'italic'),
+                             anchor='w', justify='left',
+                             wraplength=550, fg='#4f46e5')
+        hint_lbl.pack(fill=tk.X, pady=(8, 5))
+
+        # ---------- Заполнение дерева ----------
+        def populate(query=""):
+            tree.delete(*tree.get_children())
+            query = query.lower().strip()
+
+            cats = {}
+            for t_id, info in CHART_EXAMPLES.items():
+                cat = info.get('category', 'Прочее')
+                disp = tr.type_name(t_id)
+                haystack = (disp + " " + t_id + " " +
+                            info.get('desc', '')).lower()
+                if query and query not in haystack:
+                    continue
+                cats.setdefault(cat, []).append((t_id, disp))
+
+            for cat_name in sorted(cats.keys()):
+                node = tree.insert('', 'end',
+                                    text=f"📁 {cat_name}",
+                                    open=True)
+                for t_id, disp in cats[cat_name]:
+                    tree.insert(node, 'end', text=disp,
+                                 values=(t_id,))
+
+        populate()
+
+        # ---------- Инфо-панель ----------
+        def show_info(t_id):
+            info = CHART_EXAMPLES.get(t_id, {})
+            title_lbl.configure(text=tr.type_name(t_id))
+            desc_lbl.configure(text=info.get('desc', ''))
+            fields_lbl.configure(
+                text=f"📋 Поля: {info.get('fields', '—')}")
+
+            parts = []
+            if info.get('example_x'):
+                parts.append(f"X: {info['example_x']}")
+            if info.get('example_y'):
+                parts.append(f"Y: {info['example_y']}")
+            if info.get('example_z'):
+                parts.append(f"Z: {info['example_z']}")
+
+            example_text.configure(state='normal')
+            example_text.delete('1.0', tk.END)
+            example_text.insert(
+                '1.0',
+                '\n\n'.join(parts) if parts
+                else '(нет готового примера)')
+            example_text.configure(state='disabled')
+
+            hint_lbl.configure(text=f"💡 {info.get('hint', '')}")
+
+        def on_select(event=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            vals = tree.item(sel[0], 'values')
+            if vals:
+                show_info(vals[0])
+
+        tree.bind('<<TreeviewSelect>>', on_select)
+
+        def on_search(*args):
+            populate(search_var.get())
+
+        search_var.trace_add('write', on_search)
+        search_entry_ref = top.winfo_children()[-1]
+        search_entry_ref.focus_set()
+
+        # ---------- Кнопки ----------
+        bottom = ttk.Frame(win, padding=10)
+        bottom.pack(fill=tk.X, side=tk.BOTTOM)
+
+        def get_selected_id():
+            sel = tree.selection()
+            if not sel:
+                return None
+            vals = tree.item(sel[0], 'values')
+            return vals[0] if vals else None
+
+        def apply_example():
+            t_id = get_selected_id()
+            if not t_id:
+                return
+            info = CHART_EXAMPLES.get(t_id, {})
+
+            self.type_var.set(tr.type_name(t_id))
+            self._on_type_change()
+
+            if info.get('example_x'):
+                self.entry_x.delete(0, tk.END)
+                self.entry_x.insert(0, info['example_x'])
+            if info.get('example_y'):
+                self.entry_y.delete(0, tk.END)
+                self.entry_y.insert(0, info['example_y'])
+            if info.get('example_z'):
+                self.entry_z.delete(0, tk.END)
+                self.entry_z.insert(0, info['example_z'])
+
+            # Специальные поля для Sankey/Круговая
+            if t_id == "Sankey":
+                self.entry_pie.delete(0, tk.END)
+                self.entry_pie.insert(0, "In, A, B, C")
+            elif t_id == "Круговая":
+                self.entry_pie.delete(0, tk.END)
+                self.entry_pie.insert(0, "A, B, C, D, E")
+                self.entry_pie_colors.delete(0, tk.END)
+                self.entry_pie_colors.insert(
+                    0, "red, blue, green, orange, purple")
+
+            self.notebook.select(0)
+            self._show_history(
+                f"Загружен пример: {tr.type_name(t_id)}")
+            win.destroy()
+
+        def copy_example():
+            t_id = get_selected_id()
+            if not t_id:
+                return
+            text = example_text.get('1.0', tk.END).strip()
+            if not text:
+                return
+            win.clipboard_clear()
+            win.clipboard_append(text)
+            self._show_history("Пример скопирован в буфер")
+
+        tree.bind('<Double-1>', lambda e: apply_example())
+
+        ttk.Button(bottom, text="📋 Копировать",
+                    command=copy_example).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bottom, text="📥 Применить в форму",
+                    command=apply_example).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bottom, text="Закрыть",
+                    command=win.destroy).pack(side=tk.RIGHT, padx=2)
+
+    def _show_about(self):
+        """Окно «О приложении»."""
+        win = tk.Toplevel(self.root)
+        win.title(tr.t('menu.help.about'))
+        win.geometry("480x420")
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.bind('<Escape>', lambda e: win.destroy())
+
+        # Получаем версию приложения
+        try:
+            from grapheditor import __version__
+        except ImportError:
+            try:
+                from .. import __version__
+            except ImportError:
+                __version__ = "1.6.0"
+
+        # --- Иконка (если есть) ---
+        try:
+            assets = self._assets_dir()
+            png_path = os.path.join(assets, 'icon.png')
+            if os.path.exists(png_path):
+                img = tk.PhotoImage(file=png_path)
+                # Уменьшаем картинку (берем каждый 4-й пиксель для простого ресайза)
+                # (или используем PIL, если он есть)
+                try:
+                    from PIL import Image, ImageTk
+                    pil_img = Image.open(png_path).resize((64, 64), Image.LANCZOS)
+                    img = ImageTk.PhotoImage(pil_img)
+                except Exception:
+                    pass
+
+                lbl_img = tk.Label(win, image=img)
+                lbl_img.image = img  # защита от сборки мусора
+                lbl_img.pack(pady=(20, 10))
+        except Exception:
+            pass
+
+        # --- Заголовок и Версия ---
+        tk.Label(win, text="GraphEditor Pro",
+                 font=('Arial', 20, 'bold'), fg='#4f46e5').pack()
+        tk.Label(win, text=f"Версия {__version__}",
+                 font=('Arial', 10), fg='#666').pack(pady=(0, 15))
+
+        # --- Описание ---
+        desc = (
+            "Продвинутый кроссплатформенный редактор графиков\n"
+            "для научной визуализации.\n\n"
+            "130+ типов графиков, 3D-поверхности, анимации,\n"
+            "локальный ИИ, система плагинов и 20 языков."
+        )
+        tk.Label(win, text=desc, justify='center',
+                 font=('Arial', 10), fg='#333').pack(pady=10)
+
+        # --- Автор и Лицензия ---
+        tk.Label(win, text="Автор: valkaa", font=('Arial', 9)).pack(pady=(10, 2))
+        tk.Label(win, text="Лицензия: MIT", font=('Arial', 9), fg='#666').pack()
+
+        # --- Ссылки ---
+        link_frame = tk.Frame(win)
+        link_frame.pack(pady=15)
+
+        def open_url(url):
+            import webbrowser
+            webbrowser.open(url)
+
+        lbl_gh = tk.Label(link_frame, text="GitHub", fg="blue", cursor="hand2", font=('Arial', 9, 'underline'))
+        lbl_gh.pack(side=tk.LEFT, padx=10)
+        lbl_gh.bind("<Button-1>", lambda e: open_url("https://github.com/valkaaaa/graph-editor"))
+
+        lbl_site = tk.Label(link_frame, text="Сайт проекта", fg="blue", cursor="hand2", font=('Arial', 9, 'underline'))
+        lbl_site.pack(side=tk.LEFT, padx=10)
+        lbl_site.bind("<Button-1>", lambda e: open_url("https://graph-editor.ct.ws/"))
+
+        # --- Кнопка Закрыть ---
+        ttk.Button(win, text="Закрыть", command=win.destroy, width=15).pack(pady=20)

@@ -30,6 +30,7 @@ DEFAULT_HOTKEYS = {
     'cut':               ('<Control-x>',        'hotkey.cut'),
     'delete':            ('<Delete>',           'hotkey.delete'),
     'toggle_visibility': ('<Control-h>',        'hotkey.toggle_visibility'),
+    'help': ('<F1>', 'hotkey.help'),
 }
 
 
@@ -103,6 +104,7 @@ class ShortcutsMixin:
             'paste':             self._hk_paste,
             'delete':            self._on_delete_key,
             'toggle_visibility': lambda e: self._toggle_visibility(),
+            'help': lambda e: self._show_chart_help(),
         }
 
         for action, seq in self._get_hotkeys().items():

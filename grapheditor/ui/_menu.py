@@ -1,12 +1,11 @@
-"""Главное меню, темы, плагины.
-
-Содержит:
-  - _build_menu — полное меню приложения
-  - _populate_theme_menu, _delete_theme, _open_theme_editor
-  - _open_plugins_folder, _reload_plugins
-"""
+"""Главное меню, темы, плагины, справка, веб-версия."""
 import os
 import sys
+import threading
+import socket
+import functools
+import webbrowser
+import http.server
 import tkinter as tk
 
 from tkinter import ttk, messagebox, colorchooser, Menu
@@ -15,11 +14,6 @@ from translator import tr, INTERNAL_TYPES
 from themes import (THEMES, THEME_KEYS, is_custom_theme,
                     save_custom_theme, delete_custom_theme,
                     theme_key_from_name)
-import threading
-import socket
-import functools
-import webbrowser
-import http.server
 
 
 class MenuUIMixin:
@@ -73,22 +67,16 @@ class MenuUIMixin:
                                   command=self.export_python_code)
         self.filemenu.add_separator()
 
-        # === Консоли ===
+        # === Консоли и Веб-версия ===
         self.filemenu.add_command(label=tr.t('menu.file.console'),
                                   accelerator="Ctrl+`",
                                   command=self._open_console)
         self.filemenu.add_command(label="DSL-консоль",
                                   accelerator="Ctrl+Alt+C",
                                   command=self._open_dsl_console)
-        self.filemenu.add_command(label="DSL-справочник",
-                                  command=self._show_dsl_help)
-
-        self.filemenu.add_separator()
-        self.filemenu.add_command(label=tr.t('menu.file.console'),
-                                  accelerator="Ctrl+`",
-                                  command=self._open_console)
         self.filemenu.add_command(label="🌐 Веб-версия...",
                                   command=self._open_web_version)
+
         self.filemenu.add_separator()
         self.filemenu.add_command(label=tr.t('menu.file.tour'),
                                   command=self._start_onboarding)
@@ -135,7 +123,7 @@ class MenuUIMixin:
             command=self._show_palette_dialog)
 
         self.editmenu.add_separator()
-        self.editmenu.add_command(label="Справочник формул",
+        self.editmenu.add_command(label="📐 Справочник формул",
                                   command=self._show_formula_help)
         self.editmenu.add_separator()
         self.editmenu.add_command(label=tr.t('menu.edit.clear_all'),
@@ -246,7 +234,7 @@ class MenuUIMixin:
             label=tr.t('menu.view.drag_points'),
             variable=self.drag_points_enabled)
 
-        # --- Линейка ---
+        # --- Линейка и Выделение ---
         if not hasattr(self, 'measure_var'):
             self.measure_var = tk.BooleanVar(value=False)
         self.viewmenu.add_checkbutton(
@@ -254,11 +242,10 @@ class MenuUIMixin:
             variable=self.measure_var,
             command=self._toggle_measure)
 
-        # --- Выделение ---
         if not hasattr(self, 'selection_brush_var'):
             self.selection_brush_var = tk.BooleanVar(value=False)
         self.viewmenu.add_checkbutton(
-            label="⬚ Выделение",
+            label="⬚ Выделение прямоугольником",
             variable=self.selection_brush_var,
             command=self._toggle_selection_brush)
 
@@ -289,6 +276,29 @@ class MenuUIMixin:
         self.viewmenu.add_checkbutton(
             label=tr.t('menu.view.live_preview'),
             variable=self.live_preview_var)
+
+        # ---------------- Справка ----------------
+        self.helpmenu = Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label=tr.t('menu.help'), menu=self.helpmenu)
+
+        self.helpmenu.add_command(
+            label=tr.t('menu.help.charts'),
+            accelerator="F1",
+            command=self._show_chart_help
+        )
+        self.helpmenu.add_command(
+            label=tr.t('menu.help.formulas'),
+            command=self._show_formula_help
+        )
+        self.helpmenu.add_command(
+            label=tr.t('menu.help.dsl'),
+            command=self._show_dsl_help
+        )
+        self.helpmenu.add_separator()
+        self.helpmenu.add_command(
+            label=tr.t('menu.help.about'),
+            command=self._show_about
+        )
 
     # ========================================================================
     # ТЕМЫ
@@ -530,7 +540,6 @@ class MenuUIMixin:
         except ImportError:
             from grapheditor.plugins import load_plugins
         try:
-            # Перезагружаем плагины (с откатом патчей внутри load_plugins)
             self.plugin_registry = load_plugins(self)
             self.type_combo['values'] = [tr.type_name(t)
                                          for t in INTERNAL_TYPES]
@@ -550,13 +559,11 @@ class MenuUIMixin:
         except Exception as e:
             messagebox.showerror(tr.t('msg.error'), str(e))
 
+    # ========================================================================
+    # ВЕБ-ВЕРСИЯ
+    # ========================================================================
     def _open_web_version(self):
-        """Запускает локальный HTTP-сервер для папки web/ и открывает браузер.
-
-        Это нужно потому, что Pyodide (WebAssembly) требует HTTP-протокол —
-        из file:// браузер заблокирует загрузку .wasm и .whl файлов.
-        """
-        # --- 1. Ищем index.html ---
+        """Запускает локальный HTTP-сервер для папки web/ и открывает браузер."""
         if getattr(sys, 'frozen', False):
             base = getattr(sys, '_MEIPASS',
                            os.path.dirname(sys.executable))
@@ -582,7 +589,6 @@ class MenuUIMixin:
 
         web_dir = os.path.dirname(html_path)
 
-        # --- 2. Если сервер уже запущен — просто открываем браузер ---
         existing = getattr(self, '_web_server', None)
         if existing is not None:
             try:
@@ -590,17 +596,15 @@ class MenuUIMixin:
                 webbrowser.open(f"http://127.0.0.1:{port}/index.html")
                 return
             except Exception:
-                self._web_server = None  # сервер умер, запустим заново
+                self._web_server = None
 
-        # --- 3. Находим свободный порт ---
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             port = s.getsockname()[1]
 
-        # --- 4. Создаём HTTP-сервер, отключаем логи в консоль ---
         class QuietHandler(http.server.SimpleHTTPRequestHandler):
             def log_message(self, fmt, *args):
-                pass  # не засоряем stdout
+                pass
 
         handler = functools.partial(QuietHandler, directory=web_dir)
 
@@ -613,7 +617,6 @@ class MenuUIMixin:
                 f"Не удалось запустить локальный сервер:\n{e}")
             return
 
-        # --- 5. Запускаем сервер в фоновом потоке ---
         thread = threading.Thread(
             target=server.serve_forever, daemon=True)
         thread.start()
@@ -621,14 +624,13 @@ class MenuUIMixin:
         self._web_server = server
         self._web_thread = thread
 
-        # --- 6. Открываем браузер ---
         webbrowser.open(f"http://127.0.0.1:{port}/index.html")
 
         self._show_history(
             f"Веб-версия: http://127.0.0.1:{port}/index.html")
 
     def _stop_web_server(self):
-        """Останавливает локальный HTTP-сервер (вызывается при закрытии)."""
+        """Останавливает локальный HTTP-сервер."""
         server = getattr(self, '_web_server', None)
         if server is None:
             return
