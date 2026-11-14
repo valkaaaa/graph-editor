@@ -115,6 +115,7 @@ class BaseUIMixin:
 
     # ========================================================================
     # ПОИСК В ДЕРЕВЕ
+    # ПОИСК В ДЕРЕВЕ
     # ========================================================================
     def _focus_search(self):
         for w in self.notebook.winfo_children():
@@ -131,31 +132,69 @@ class BaseUIMixin:
     # ИКОНКИ И РЕСУРСЫ
     # ========================================================================
     def _assets_dir(self):
+        """Ищет папку assets в корне проекта или в PyInstaller bundle."""
         if getattr(sys, 'frozen', False):
+            # PyInstaller: assets распаковываются в _MEIPASS
             base = getattr(sys, '_MEIPASS',
                            os.path.dirname(sys.executable))
-        else:
-            base = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base, 'assets')
+            return os.path.join(base, 'assets')
+
+        # Режим исходников:
+        # grapheditor/ui/_base.py -> grapheditor/ui -> grapheditor
+        here = os.path.dirname(os.path.abspath(__file__))
+        pkg_root = os.path.dirname(os.path.dirname(here))
+        project_root = os.path.dirname(pkg_root)
+
+        # 1. Пробуем <project_root>/assets (обычный случай)
+        project_assets = os.path.join(project_root, 'assets')
+        if os.path.isdir(project_assets):
+            return project_assets
+
+        # 2. Fallback: <pkg_root>/assets (если assets перенесли внутрь пакета)
+        pkg_assets = os.path.join(pkg_root, 'assets')
+        if os.path.isdir(pkg_assets):
+            return pkg_assets
+
+        # 3. Последний вариант — вернуть project_assets (может не существовать)
+        return project_assets
 
     def _set_window_icon(self):
+        """Устанавливает иконку окна. Работает на Windows, Linux, macOS."""
+        from grapheditor import __version__
+
+        # Windows: AppUserModelID нужен для правильной группировки в панели задач
         if sys.platform == 'win32':
             try:
                 import ctypes
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                    "GraphEditorPro.1.4.0")
+                    f"GraphEditorPro.{__version__}")
             except Exception:
                 pass
-        ico = os.path.join(self._assets_dir(), 'icon.ico')
-        png = os.path.join(self._assets_dir(), 'icon.png')
-        try:
-            if os.name == 'nt' and os.path.exists(ico):
-                self.root.iconbitmap(ico)
-            elif os.path.exists(png):
-                self._window_icon = tk.PhotoImage(file=png)
-                self.root.iconphoto(True, self._window_icon)
-        except Exception as e:
-            print(f"[icon] {e}")
+
+        assets = self._assets_dir()
+        ico_path = os.path.join(assets, 'icon.ico')
+        png_path = os.path.join(assets, 'icon.png')
+
+        # Windows: сначала .ico (правильно масштабируется в панели задач)
+        if sys.platform == 'win32' and os.path.exists(ico_path):
+            try:
+                self.root.iconbitmap(ico_path)
+                self.root.iconbitmap(default=ico_path)
+                return
+            except Exception as e:
+                print(f"[icon] ico failed: {e}")
+
+        # Linux / macOS (и Windows как fallback): .png
+        if os.path.exists(png_path):
+            try:
+                _icon = tk.PhotoImage(file=png_path)
+                self.root.iconphoto(True, _icon)
+                self._window_icon = _icon  # защита от GC
+                return
+            except Exception as e:
+                print(f"[icon] png failed: {e}")
+
+        # Нет ни .ico, ни .png — работаем без кастомной иконки
 
     def _load_icon(self, name, size=20):
         if not hasattr(self, '_icon_cache'):
@@ -257,6 +296,8 @@ class BaseUIMixin:
                                      for t in INTERNAL_TYPES]
         current_internal = tr.find_type_by_display(self.type_var.get())
         self.type_var.set(tr.type_name(current_internal))
+        if hasattr(self, 'type_btn'):
+            self.type_btn.configure(textvariable=self.type_var)
 
         self.anim_combo['values'] = [tr.anim_name(a)
                                      for a in INTERNAL_ANIM_TYPES]

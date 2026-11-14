@@ -1,13 +1,4 @@
-"""Базовые утилиты и инфраструктура для построения графиков.
-
-Содержит:
-  - создание холста (fig, canvas, toolbar, события)
-  - разбор данных, проекции (2d/polar/3d)
-  - subplots и переключение между ними
-  - управление artist-ами (удаление, видимость)
-  - _default_data, _smooth, _safe_eval
-  - сетка/легенда/оси/пределы/цвет
-"""
+"""Базовые утилиты и инфраструктура для построения графиков."""
 import re
 
 import tkinter as tk
@@ -111,7 +102,6 @@ class BasePlotsMixin:
     # ПРОЕКЦИИ
     # ========================================================================
     def _projection_for_type(self, t):
-        # Plugin-типы — приоритетнее
         if (hasattr(self, 'plugin_registry')
                 and t in self.plugin_registry.chart_types):
             return self.plugin_registry.chart_types[t].projection
@@ -120,7 +110,7 @@ class BasePlotsMixin:
                  "Полярная теплокарта", "Роза ветров",
                  "Диаграмма Тейлора", "Sunburst", "Radar chart"):
             return 'polar'
-        if "3D" in t:
+        if "3D" in t or "3d" in t.lower():
             return '3d'
         return '2d'
 
@@ -132,9 +122,9 @@ class BasePlotsMixin:
             return
         current = getattr(self.axes[0], 'name', 'rectilinear')
         need_rebuild = (
-                (projection == '3d' and current != '3d') or
-                (projection == 'polar' and current != 'polar') or
-                (projection == '2d' and current != 'rectilinear')
+            (projection == '3d' and current != '3d') or
+            (projection == 'polar' and current != 'polar') or
+            (projection == '2d' and current != 'rectilinear')
         )
         if not need_rebuild:
             return
@@ -153,8 +143,7 @@ class BasePlotsMixin:
         self.axes = []
         n = self.subplot_rows * self.subplot_cols
         for i in range(n):
-            ax = self.fig.add_subplot(self.subplot_rows,
-                                      self.subplot_cols,
+            ax = self.fig.add_subplot(self.subplot_rows, self.subplot_cols,
                                       i + 1, **proj_kw)
             self.axes.append(ax)
         self.ax = self.axes[0]
@@ -166,26 +155,23 @@ class BasePlotsMixin:
         if projection == '2d':
             self.graphs_data = [
                 d for d in self.graphs_data
-                if "3D" not in d['type'] and d['type'] not in
-                   ("Радиальная", "Полярный scatter",
-                    "Полярная теплокарта", "Роза ветров",
-                    "Диаграмма Тейлора", "Sunburst", "Radar chart")
+                if "3D" not in d['type'] and "3d" not in d['type'].lower()
+                and d['type'] not in
+                ("Радиальная", "Полярный scatter",
+                 "Полярная теплокарта", "Роза ветров",
+                 "Диаграмма Тейлора", "Sunburst", "Radar chart")
             ]
         elif projection == '3d':
-            self.graphs_data = [d for d in self.graphs_data
-                                if "3D" in d['type']]
-
+            self.graphs_data = [
+                d for d in self.graphs_data
+                if "3D" in d['type'] or "3d" in d['type'].lower()
+            ]
         for d in self.graphs_data:
             if d.get('subplot_index', 0) >= len(self.axes):
                 d['subplot_index'] = 0
             d['artist'] = self._create_artist(d)
         self._update_listbox()
         self.canvas.draw()
-
-        # Пересоздать selection brush, если он был включён
-        if (getattr(self, 'selection_brush_var', None)
-                and self.selection_brush_var.get()):
-            self._init_rect_selectors()
 
     # ========================================================================
     # УПРАВЛЕНИЕ ARTIST
@@ -279,12 +265,13 @@ class BasePlotsMixin:
                 pass
         self.axes_secondary = {}
         self.fig.clear()
-        needs_3d = any("3D" in d['type'] for d in self.graphs_data)
+        needs_3d = any("3D" in d['type'] or "3d" in d['type'].lower()
+                       for d in self.graphs_data)
         needs_polar = any(d['type'] in ("Радиальная", "Полярный scatter",
-                                        "Полярная теплокарта",
-                                        "Роза ветров",
-                                        "Диаграмма Тейлора",
-                                        "Sunburst", "Radar chart")
+                                         "Полярная теплокарта",
+                                         "Роза ветров",
+                                         "Диаграмма Тейлора",
+                                         "Sunburst", "Radar chart")
                           for d in self.graphs_data)
         proj_kw = {}
         if needs_3d:
@@ -353,81 +340,142 @@ class BasePlotsMixin:
         kernel = np.ones(window) / window
         return np.convolve(y, kernel, mode='same')
 
-    def _safe_eval(self, expr, x_val, t_val, y_val=0, silent=False):
-        # Базовые функции numpy
+    def _safe_eval(self, expr, x_val, t_val, y_val=0, silent=False, **kwargs):
+        """Вычисляет математическое выражение с поддержкой Unicode и параметров."""
+        if isinstance(expr, str):
+            e = expr.strip()
+
+            # ---------- 1. Убираем "y =" в начале ----------
+            e = re.sub(r'^\s*(?:y|f\s*\(\s*x\s*\))\s*=\s*',
+                       '', e, flags=re.IGNORECASE)
+
+            # ---------- 2. Unicode → Python ----------
+            # Степени
+            for sup, exp in (('⁰', '**0'), ('¹', '**1'),
+                             ('²', '**2'), ('³', '**3'),
+                             ('⁴', '**4'), ('⁵', '**5'),
+                             ('⁶', '**6'), ('⁷', '**7'),
+                             ('⁸', '**8'), ('⁹', '**9')):
+                e = e.replace(sup, exp)
+
+            # Корни и греческие буквы
+            e = e.replace('√', 'sqrt').replace('∛', 'cbrt')
+            e = e.replace('π', 'pi').replace('τ', 'tau')
+            e = e.replace('θ', 'theta').replace('α', 'alpha')
+            e = e.replace('β', 'beta').replace('γ', 'gamma')
+            e = e.replace('λ', 'lambda_')
+
+            # Дроби в Unicode
+            e = e.replace('½', '(1/2)').replace('⅓', '(1/3)')
+            e = e.replace('⅔', '(2/3)').replace('¼', '(1/4)')
+            e = e.replace('¾', '(3/4)').replace('⅛', '(1/8)')
+
+            # Знаки
+            e = e.replace('×', '*').replace('÷', '/')
+            e = e.replace('·', '*').replace('−', '-')
+            e = e.replace('∞', 'inf').replace('\u00a0', ' ')
+
+            # ^ → ** (но не в тексте "x^2" → "x**2")
+            e = e.replace('^', '**')
+
+            # 2sin(x) → 2*sin(x)
+            e = re.sub(r'(\d)(sin|cos|tan|exp|log|sqrt|erf|abs|pi)',
+                       r'\1*\2', e)
+            # 2x → 2*x
+            e = re.sub(r'(\d)(x|y|t)\b(?!\d)', r'\1*\2', e)
+            # (x+1)(x-1) → (x+1)*(x-1)
+            e = re.sub(r'\)\s*\(', ')*(', e)
+
+            # |...| → abs(...)
+            prev = None
+            guard = 0
+            while prev != e and guard < 10:
+                prev = e
+                e = re.sub(r'\|([^|]+)\|', r'abs(\1)', e)
+                guard += 1
+
+            # ln(x) → log(x)
+            e = re.sub(r'\bln\s*\(', 'log(', e)
+            e = re.sub(r'\bln\s+', 'log(', e)
+
+            # Функция без скобок: sin x → sin(x)
+            e = re.sub(
+                r'\b(sin|cos|tan|log|exp|sqrt|abs)\s+([a-zA-Z0-9_]+)',
+                r'\1(\2)', e)
+
+            expr = e
+
+        # ---------- 3. Базовые функции ----------
         sd = {
-            # --- Базовые математические ---
             "abs": np.abs, "sign": np.sign,
             "floor": np.floor, "ceil": np.ceil, "round": np.round,
             "trunc": np.trunc, "rint": np.rint,
             "min": np.minimum, "max": np.maximum, "clip": np.clip,
             "where": np.where, "power": np.power, "mod": np.mod,
 
-            # --- Тригонометрия ---
             "sin": np.sin, "cos": np.cos, "tan": np.tan,
             "arcsin": np.arcsin, "arccos": np.arccos,
             "arctan": np.arctan, "arctan2": np.arctan2,
             "hypot": np.hypot,
-            # Гиперболические
             "sinh": np.sinh, "cosh": np.cosh, "tanh": np.tanh,
-            "arcsinh": np.arcsinh, "arccosh": np.arccosh, "arctanh": np.arctanh,
-            # Переводы углов
+            "arcsinh": np.arcsinh, "arccosh": np.arccosh,
+            "arctanh": np.arctanh,
             "deg2rad": np.deg2rad, "rad2deg": np.rad2deg,
 
-            # --- Экспоненты и логарифмы ---
             "exp": np.exp, "exp2": np.exp2, "expm1": np.expm1,
-            "log": np.log, "log10": np.log10, "log2": np.log2, "log1p": np.log1p,
+            "log": np.log, "log10": np.log10, "log2": np.log2,
+            "log1p": np.log1p,
             "sqrt": np.sqrt, "cbrt": np.cbrt,
 
-            # --- Работа с массивами (полезно для Генератора) ---
             "cumsum": np.cumsum, "diff": np.diff,
             "average": np.average, "median": np.median, "std": np.std,
 
-            # --- Комплексные числа (для 3D и фракталов) ---
-            "real": np.real, "imag": np.imag, "angle": np.angle, "conj": np.conj,
+            "real": np.real, "imag": np.imag, "angle": np.angle,
+            "conj": np.conj,
 
-            # --- Константы ---
-            "pi": np.pi, "e": np.e, "tau": 2 * np.pi, "inf": np.inf, "nan": np.nan,
-
-            # --- Переменные ---
-            "x": x_val, "y": y_val, "t": t_val,
+            "pi": np.pi, "e": np.e, "tau": 2 * np.pi,
+            "inf": np.inf, "nan": np.nan,
         }
 
-        # ---------- Спецфункции ----------
-        # heaviside — всегда доступна через numpy, независимо от scipy
-        def _heaviside(x, h0=0.5):
-            """Функция Хевисайда. h0 — значение при x=0 (по умолчанию 0.5)."""
-            return np.heaviside(x, h0)
+        # ---------- 4. Переменные ----------
+        sd["x"] = x_val
+        sd["y"] = y_val
+        sd["t"] = t_val
+        sd.update(kwargs)  # Пользовательские параметры a, b, c...
 
+        # ---------- 5. Функция Хевисайда (всегда) ----------
+        def _heaviside(x, h0=0.5):
+            return np.heaviside(x, h0)
         sd["heaviside"] = _heaviside
 
-        # Остальные спецфункции — только если scipy установлен
+        # ---------- 6. Спецфункции scipy ----------
         try:
             from scipy import special as sp
-
-            # Добавляем только то, что точно есть
             for name, attr in [
-                ("erf", "erf"),
-                ("erfc", "erfc"),
-                ("gamma", "gamma"),
-                ("lgamma", "gammaln"),
-                ("jv", "jv"),
-                ("yv", "yv"),
+                ("erf", "erf"), ("erfc", "erfc"),
+                ("gamma", "gamma"), ("lgamma", "gammaln"),
+                ("jv", "jv"), ("yv", "yv"),
             ]:
                 if hasattr(sp, attr):
                     sd[name] = getattr(sp, attr)
 
-            # airy возвращает 4 значения (Ai, Ai', Bi, Bi');
-            # пользователю нужна только Ai(x)
             if hasattr(sp, "airy"):
                 sd["airy"] = lambda x: sp.airy(x)[0]
 
-            # На случай, если sp.heaviside всё-таки есть (SciPy ≥1.12) —
-            # используем её (она может быть точнее на краях), иначе np-версия
             if hasattr(sp, "heaviside"):
                 sd["heaviside"] = sp.heaviside
-
         except (ImportError, AttributeError):
+            pass
+
+        # ---------- 7. Вычисление ----------
+        try:
+            # Поддержка SymPy-объектов (если они переданы)
+            import sympy as sp_mod
+            if isinstance(x_val, sp_mod.Expr):
+                return sp_mod.lambdify(
+                    list(kwargs.keys()) + ['x', 't', 'y'],
+                    expr, modules=[sd])(**kwargs, x=x_val, t=t_val, y=y_val)
+        except ImportError:
             pass
 
         try:
@@ -567,7 +615,7 @@ class BasePlotsMixin:
         mpl.rcParams['ytick.labelsize'] = s['font_ticks']
         mpl.rcParams['axes.linewidth'] = s['axis_lw']
 
-        # --- MATHTEXT ---
+        # --- MATHTEXT / LATEX ---
         mpl.rcParams['text.usetex'] = s.get('use_latex', False)
         mpl.rcParams['mathtext.default'] = 'regular'
 

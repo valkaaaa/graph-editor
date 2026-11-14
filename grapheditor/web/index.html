@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>GraphEditor Web 1.2</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="assets/icon.png">
+</head>
+<body>
+  <nav class="menubar" id="menubar">
+    <div class="menu" data-menu="file">
+      <button class="menu-btn" type="button">Файл</button>
+      <div class="dropdown">
+        <button type="button" data-action="new">Новый проект</button>
+        <hr>
+        <button type="button" data-action="import-project">📂 Импорт проекта (.graphxw)</button>
+        <button type="button" data-action="export-project">💾 Экспорт проекта (.graphxw)</button>
+        <hr>
+        <button type="button" data-action="export-png">🖼 Экспорт PNG</button>
+        <button type="button" data-action="export-jpg">🖼 Экспорт JPG</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="edit">
+      <button class="menu-btn" type="button">Правка</button>
+      <div class="dropdown">
+        <button type="button" data-action="undo" id="undoBtn">↶ Отменить (Ctrl+Z)</button>
+        <button type="button" data-action="redo" id="redoBtn">↷ Повторить (Ctrl+Y)</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="view">
+      <button class="menu-btn" type="button">Вид</button>
+      <div class="dropdown">
+        <strong>Панели</strong>
+        <label><input type="checkbox" id="toggleBlockLabels" checked> Подписи и название</label>
+        <label><input type="checkbox" id="toggleBlockPresets" checked> Пресеты осей</label>
+        <label><input type="checkbox" id="toggleBlockAnims" checked> Анимации</label>
+        <label><input type="checkbox" id="toggleBlockTable" checked> Таблица точек</label>
+        <hr>
+        <strong>Колонки таблицы</strong>
+        <label><input type="checkbox" id="toggleColX" checked> Колонка «X / подпись»</label>
+        <label><input type="checkbox" id="toggleColY" checked> Колонка «Y»</label>
+        <label><input type="checkbox" id="toggleColDel" checked> Колонка «Удалить»</label>
+        <hr>
+        <button type="button" data-action="toggle-theme">🌙 Переключить тему</button>
+        <button type="button" data-action="show-all-blocks">Показать все блоки</button>
+      </div>
+    </div>
+    <div class="menu" data-menu="settings">
+      <button class="menu-btn" type="button">Настройки</button>
+      <div class="dropdown" style="min-width: 280px">
+        <label>Шрифт:
+          <select id="fontFamily" style="flex:1">
+            <option value="sans-serif">Sans-serif</option>
+            <option value="serif">Serif</option>
+            <option value="monospace">Monospace</option>
+            <option value="Arial, sans-serif">Arial</option>
+            <option value="'Times New Roman', serif">Times New Roman</option>
+            <option value="'Courier New', monospace">Courier New</option>
+          </select>
+        </label>
+        <label>Размер:
+          <input type="number" id="fontSize" min="8" max="40" value="14" style="width:70px"> px
+        </label>
+      </div>
+    </div>
+  </nav>
+
+  <header>
+    <h1>GraphEditor Web 1.2</h1>
+  </header>
+
+  <input type="file" id="importFile" accept=".graphxw,.json" style="display:none">
+
+  <div class="controls">
+    <label>Тип графика:
+      <select id="chartType">
+        <option value="line">Линейный</option>
+        <option value="scatter">Точечный</option>
+        <option value="bar">Столбчатый</option>
+        <option value="pie">Круговой (Pie)</option>
+        <option value="doughnut">Кольцевой (Doughnut)</option>
+        <option value="polarArea">Полярная площадь</option>
+        <option value="radar">Радар</option>
+      </select>
+    </label>
+
+    <fieldset id="fieldsetLabels">
+      <legend>Подписи и название</legend>
+      <label>Название графика:
+        <input type="text" id="chartTitle" size="30" value="Мой график">
+      </label>
+      <div id="axisOptions">
+        <br>
+        <label>Подпись оси X: <input type="text" id="xLabel" size="18" value="X"></label>
+        <label>Подпись оси Y: <input type="text" id="yLabel" size="18" value="Y"></label>
+      </div>
+    </fieldset>
+
+    <fieldset id="fieldsetPresets">
+      <legend>Пресеты осей (пустые поля — авто)</legend>
+      <div class="axis-grid" style="margin-bottom:8px">
+        <label>X мин: <input type="number" id="xMin" step="any" style="width:100%"></label>
+        <label>X макс: <input type="number" id="xMax" step="any" style="width:100%"></label>
+        <label>X шаг: <input type="number" id="xStep" step="any" min="0" style="width:100%"></label>
+      </div>
+      <div class="axis-grid">
+        <label>Y мин: <input type="number" id="yMin" step="any" style="width:100%"></label>
+        <label>Y макс: <input type="number" id="yMax" step="any" style="width:100%"></label>
+        <label>Y шаг: <input type="number" id="yStep" step="any" min="0" style="width:100%"></label>
+      </div>
+    </fieldset>
+
+    <fieldset id="fieldsetAnimations">
+      <legend>Анимации</legend>
+
+      <div class="anim-section">
+        <div class="anim-section-title">Переходы Chart.js (при изменении данных)</div>
+        <label><input type="checkbox" id="animationsEnabled" checked> Включить</label>
+        <label>Длительность:
+          <input type="number" id="animDuration" min="0" max="3000" step="50" value="300" style="width:80px"> мс
+        </label>
+        <label>Задержка:
+          <input type="number" id="animDelay" min="0" max="2000" step="50" value="0" style="width:80px"> мс
+        </label>
+        <label>Кривая:
+          <select id="animEasing">
+            <option value="easeOutQuart">easeOutQuart</option>
+            <option value="easeOutBounce">easeOutBounce</option>
+            <option value="easeInOutQuad">easeInOutQuad</option>
+            <option value="easeOutElastic">easeOutElastic</option>
+            <option value="linear">linear</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="anim-section">
+        <div class="anim-section-title">Непрерывная анимация на холсте</div>
+        <label>Тип:
+          <select id="animType">
+            <option value="pulse">Пульсация точек</option>
+            <option value="wave">Волна (колебание Y)</option>
+            <option value="rainbow">Радуга (смена цвета)</option>
+            <option value="breathe">Дыхание (масштаб)</option>
+            <option value="appear">Появление / исчезновение</option>
+            <option value="slide">Сдвиг по X</option>
+            <option value="rotate">Вращение (круговые)</option>
+          </select>
+        </label>
+        <label>Скорость:
+          <input type="range" id="animSpeed" min="0.1" max="3" step="0.1" value="1" style="width:110px">
+          <span class="slider-val" id="animSpeedVal">1.0×</span>
+        </label>
+        <label>Амплитуда:
+          <input type="range" id="animAmp" min="0.05" max="1" step="0.05" value="0.3" style="width:110px">
+          <span class="slider-val" id="animAmpVal">0.30</span>
+        </label>
+        <div style="margin-top:8px">
+          <button type="button" id="animStartBtn">▶ Запустить</button>
+          <button type="button" id="animStopBtn" class="danger" disabled>■ Остановить</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Добавить точку / сектор</legend>
+      <label><span id="xFieldLabel">X:</span>
+        <input type="text" id="xInput" value="1" style="width:120px">
+      </label>
+      <label>Y: <input type="number" id="yInput" step="any" value="10" style="width:90px"></label>
+      <button type="button" id="addBtn">Добавить</button>
+      <div class="hint">Для линейного и точечного графика точки можно перетаскивать мышью прямо на холсте.</div>
+    </fieldset>
+
+    <fieldset id="fieldsetTable">
+      <legend>Точки (редактируются прямо в таблице)</legend>
+      <table id="pointsTable">
+        <thead><tr><th>X / Подпись</th><th>Y</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div style="margin-top:8px">
+        <button type="button" id="clearBtn" class="danger">Очистить всё</button>
+        <button type="button" id="applyBtn">Применить настройки</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <div class="chart-container">
+    <canvas id="myChart"></canvas>
+  </div>
+</body>
+</html>

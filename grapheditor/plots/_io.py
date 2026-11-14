@@ -1035,177 +1035,142 @@ class IOMixin:
     # ГЕНЕРАТОРЫ
     # ========================================================================
     def _generate_data(self):
-        expr_all = self.gen_expr.get().strip()
-        if not expr_all:
-            return
+        mode = getattr(self, 'gen_mode_var', None)
+        mode = mode.get() if mode else "cartesian"
+
         try:
             xmin = float(self.gen_xmin.get().replace(',', '.'))
             xmax = float(self.gen_xmax.get().replace(',', '.'))
             n = int(self.gen_n.get())
         except ValueError:
-            messagebox.showerror(tr.t('msg.error'),
-                                  tr.t('msg.bad_format'))
+            messagebox.showerror(tr.t('msg.error'), "Неверный диапазон или кол-во точек")
             return
-        unit = self.gen_unit_var.get()
-        factor = UNIT_TO_M.get(unit, 1.0)
-        xmin_m = xmin * factor
-        xmax_m = xmax * factor
-        x = np.linspace(xmin_m, xmax_m, n)
-        exprs = [e.strip() for e in expr_all.split(';') if e.strip()]
-        if len(exprs) == 1:
-            y = self._safe_eval(exprs[0], x, 0)
-            if y is None:
-                return
+
+        # Собираем пользовательские параметры (a, b, c...)
+        extra_params = {k: v.get() for k, v in self.gen_params.items()}
+
+        # Вспомогательная функция для вычисления
+        def eval_expr(expr, val):
+            res = self._safe_eval(expr, val, 0, **extra_params)
+            if res is None: return None
+            return np.asarray(res)
+
+        if mode == "cartesian":
+            expr = self.gen_expr.get().strip()
+            if not expr: return
+            x = np.linspace(xmin, xmax, n)
+            y = eval_expr(expr, x)
+            if y is None: return
+
             self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(
-                0, ", ".join(map(str, np.round(x, 6).tolist())))
+            self.entry_x.insert(0, ", ".join(map(str, np.round(x, 6).tolist())))
             self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(
-                0, ", ".join(map(str, np.round(y, 4).tolist())))
-            self._show_history(
-                f"Сгенерировано ({xmin}–{xmax} {unit} → "
-                f"{xmin_m:.4g}–{xmax_m:.4g} м)")
+            self.entry_y.insert(0, ", ".join(map(str, np.round(y, 4).tolist())))
+            self._show_history(f"Сгенерировано: {expr}")
             self.notebook.select(0)
-            return
-        self._snapshot(tr.t('hist.generated_formulas',
-                             count=len(exprs)))
-        self._ensure_correct_axes_dimension(False)
-        colors = ['blue', 'red', 'green', 'orange',
-                  'purple', 'brown', 'magenta', 'cyan']
-        added = 0
-        for i, expr in enumerate(exprs):
-            y = self._safe_eval(expr, x, 0, silent=True)
-            if y is None:
-                continue
+            self.type_var.set(tr.type_name("Линия"))
+            self._on_type_change()
+
+        elif mode == "parametric":
+            expr_x = self.gen_expr_x.get().strip()
+            expr_y = self.gen_expr_y.get().strip()
+            if not expr_x or not expr_y: return
+            t = np.linspace(xmin, xmax, n)
+            x_val = eval_expr(expr_x, t)
+            y_val = eval_expr(expr_y, t)
+            if x_val is None or y_val is None: return
+
+            self._snapshot("Параметрическая функция")
             self.line_counter += 1
-            d = self._default_data('Линия', x.tolist(),
-                                    np.asarray(y).tolist(),
-                                    label=f"y = {expr}",
-                                    color=colors[i % len(colors)])
+            d = self._default_data(
+                'Линия', x_val.tolist(), y_val.tolist(),
+                label=f"x({expr_x}), y({expr_y})",
+                color=self.color_var.get())
             d['artist'] = self._create_artist(d)
             self.graphs_data.append(d)
-            added += 1
-        self._update_listbox()
-        self._redraw()
-        self.status_var.set(f"{added}")
+            self._update_listbox()
+            self._redraw()
+            self._show_history("Параметрическая функция построена")
 
-    def _get_rnd_shape(self):
-        text = self.rnd_shape_var.get()
-        if text == tr.t('gen.rnd_shape_3d'):
-            return '3d'
-        if text == tr.t('gen.rnd_shape_3d_grid'):
-            return '3d_grid'
-        return '2d'
+        elif mode == "polar":
+            expr = self.gen_expr_polar.get().strip()
+            if not expr: return
+            theta = np.linspace(xmin, xmax, n)
+            r = eval_expr(expr, theta)
+            if r is None: return
+            x_val = r * np.cos(theta)
+            y_val = r * np.sin(theta)
 
-    def _on_rnd_shape_change(self, event=None):
-        if self._get_rnd_shape() == '3d_grid':
-            self.rnd_grid_frame.pack(fill=tk.X, pady=2)
-        else:
-            self.rnd_grid_frame.pack_forget()
+            self._snapshot("Полярная функция")
+            self.line_counter += 1
+            d = self._default_data(
+                'Линия', x_val.tolist(), y_val.tolist(),
+                label=f"r({expr})",
+                color=self.color_var.get())
+            d['artist'] = self._create_artist(d)
+            self.graphs_data.append(d)
+            self._update_listbox()
+            self._redraw()
+            self._show_history("Полярная функция построена")
+            # Включаем авто-масштаб (чтобы круглые фигуры не плющило)
+            self.axes[0].set_aspect('equal', adjustable='datalim')
 
-    def _generate_random_data(self):
-        try:
-            n = int(self.rnd_n_var.get())
-            p1 = float(self.rnd_p1_var.get().replace(',', '.'))
-            p2 = float(self.rnd_p2_var.get().replace(',', '.'))
-            seed_text = self.rnd_seed_var.get().strip()
-            seed = int(seed_text) if seed_text else None
-        except ValueError:
-            messagebox.showerror(tr.t('msg.error'),
-                                  tr.t('msg.bad_params'))
-            return
-        if seed is not None:
-            np.random.seed(seed)
-        dist = self.rnd_dist_var.get()
-        shape = self._get_rnd_shape()
+        elif mode == "surface3d":
+            expr = self.gen_expr_z_surf.get().strip()
+            if not expr: return
 
-        def gen_values(count):
-            if dist == "normal":
-                return np.random.normal(p1, p2, count)
-            if dist == "uniform":
-                return np.random.uniform(p1, p2, count)
-            if dist == "exponential":
-                scale = p1 if p1 > 0 else 1.0
-                return np.random.exponential(scale, count) + p2
-            if dist == "poisson":
-                lam = p1 if p1 > 0 else 1.0
-                return np.random.poisson(lam, count)
-            if dist == "integers":
-                lo, hi = int(p1), int(p2)
-                if hi < lo:
-                    lo, hi = hi, lo
-                return np.random.randint(lo, hi + 1, count)
-            return np.random.normal(p1, p2, count)
+            # Для 3D-сетки ограничиваем количество точек (чтобы не зависло)
+            n_grid = min(n, 60)
+            x_vals = np.linspace(xmin, xmax, n_grid)
+            y_vals = np.linspace(xmin, xmax, n_grid)
+            X, Y = np.meshgrid(x_vals, y_vals)
 
-        if shape == '2d':
-            y = gen_values(n)
-            x = np.arange(n)
+            # Вычисляем Z (передаем x и y в _safe_eval)
+            Z = self._safe_eval(expr, X, 0, y_val=Y, **extra_params)
+            if Z is None: return
+            if Z.ndim == 1:
+                Z = np.broadcast_to(Z, X.shape)
+
+            # Заполняем поля
             self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, x.tolist())))
+            self.entry_x.insert(0, ", ".join(map(str, np.round(x_vals, 4).tolist())))
             self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(
-                0, ", ".join(map(str, np.round(y, 4).tolist())))
-            if "3D" not in tr.find_type_by_display(self.type_var.get()):
-                self.type_var.set(tr.type_name("Линия"))
-                self._on_type_change()
-            self._show_history(
-                tr.t('hist.generated_random', count=n, dist=dist))
-            self.notebook.select(0)
-            return
-        if shape == '3d':
-            x = np.arange(n)
-            y = gen_values(n)
-            z = gen_values(n)
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(0, ", ".join(map(str, x.tolist())))
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(
-                0, ", ".join(map(str, np.round(y, 4).tolist())))
-            self.entry_z.delete(0, tk.END)
-            self.entry_z.insert(
-                0, ", ".join(map(str, np.round(z, 4).tolist())))
-            t_cur = tr.find_type_by_display(self.type_var.get())
-            if "3D" not in t_cur:
-                self.type_var.set(tr.type_name("3D Линия"))
-                self._on_type_change()
-            self._show_history(
-                tr.t('hist.generated_random_3d', count=n, dist=dist))
-            self.notebook.select(0)
-            return
-        if shape == '3d_grid':
-            try:
-                gn = int(self.rnd_grid_n_var.get())
-                gm = int(self.rnd_grid_m_var.get())
-            except (ValueError, tk.TclError):
-                gn, gm = 15, 15
-            gn = max(3, gn)
-            gm = max(3, gm)
-            xg = (np.linspace(p1, p2, gn) if p2 != p1
-                  else np.arange(gn, dtype=float))
-            yg = (np.linspace(p1, p2, gm) if p2 != p1
-                  else np.arange(gm, dtype=float))
-            total = gn * gm
-            z_flat = gen_values(total)
-            Z = z_flat.reshape(gm, gn)
-            self.entry_x.delete(0, tk.END)
-            self.entry_x.insert(
-                0, ", ".join(map(str, np.round(xg, 4).tolist())))
-            self.entry_y.delete(0, tk.END)
-            self.entry_y.insert(
-                0, ", ".join(map(str, np.round(yg, 4).tolist())))
-            rows = [" ".join(map(str, np.round(row, 4).tolist()))
-                    for row in Z]
+            self.entry_y.insert(0, ", ".join(map(str, np.round(y_vals, 4).tolist())))
+
+            rows = [" ".join(map(str, np.round(row, 4).tolist())) for row in Z]
             self.entry_z.delete(0, tk.END)
             self.entry_z.insert(0, " ; ".join(rows))
-            t_cur = tr.find_type_by_display(self.type_var.get())
-            if t_cur not in ("3D Поверхность", "3D Сетка"):
-                self.type_var.set(tr.type_name("3D Поверхность"))
-                self._on_type_change()
-            self._show_history(
-                tr.t('hist.generated_random_grid',
-                     n=gn, m=gm, dist=dist))
+
+            self.type_var.set(tr.type_name("3D Поверхность"))
+            self._on_type_change()
+            self._show_history(f"Сгенерирована поверхность: z = {expr}")
             self.notebook.select(0)
-            return
+
+        elif mode == "parametric3d":
+            expr_x = self.gen_expr_x3d.get().strip()
+            expr_y = self.gen_expr_y3d.get().strip()
+            expr_z = self.gen_expr_z3d.get().strip()
+            if not expr_x or not expr_y or not expr_z: return
+
+            t = np.linspace(xmin, xmax, n)
+            x_val = eval_expr(expr_x, t)
+            y_val = eval_expr(expr_y, t)
+            z_val = eval_expr(expr_z, t)
+
+            if x_val is None or y_val is None or z_val is None: return
+
+            # Заполняем поля
+            self.entry_x.delete(0, tk.END)
+            self.entry_x.insert(0, ", ".join(map(str, np.round(x_val, 4).tolist())))
+            self.entry_y.delete(0, tk.END)
+            self.entry_y.insert(0, ", ".join(map(str, np.round(y_val, 4).tolist())))
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, ", ".join(map(str, np.round(z_val, 4).tolist())))
+
+            self.type_var.set(tr.type_name("3D Линия"))
+            self._on_type_change()
+            self._show_history(f"Сгенерирована 3D кривая: {expr_x}, {expr_y}, {expr_z}")
+            self.notebook.select(0)
 
     # ========================================================================
     # DRAG ТОЧЕК МЫШЬЮ
@@ -2290,7 +2255,7 @@ class IOMixin:
             import openpyxl
         except ImportError:
             messagebox.showerror(tr.t('msg.error'),
-                                  tr.t('excel.install_openpyxl'))
+                                 tr.t('excel.install_openpyxl'))
             return
         if not path:
             path = filedialog.askopenfilename(
@@ -2329,7 +2294,7 @@ class IOMixin:
             first = [str(c).strip().lower() if c is not None else ''
                      for c in rows[0]]
             has_header = any(h in ('x', 'y', 'z', 'yerr', 'err')
-                              for h in first)
+                             for h in first)
             data = rows[1:] if has_header else rows
 
             cols_data = {}
@@ -2344,19 +2309,19 @@ class IOMixin:
                 n_cols = len(rows[0])
                 if n_cols == 1:
                     cols_data['y'] = [r[0] for r in data
-                                       if r[0] is not None]
+                                      if r[0] is not None]
                 elif n_cols == 2:
                     cols_data['x'] = [r[0] for r in data
-                                       if r[0] is not None]
+                                      if r[0] is not None]
                     cols_data['y'] = [r[1] for r in data
-                                       if r[1] is not None]
+                                      if r[1] is not None]
                 else:
                     cols_data['x'] = [r[0] for r in data
-                                       if r[0] is not None]
+                                      if r[0] is not None]
                     cols_data['y'] = [r[1] for r in data
-                                       if r[1] is not None]
+                                      if r[1] is not None]
                     cols_data['z'] = [r[2] for r in data
-                                       if r[2] is not None]
+                                      if r[2] is not None]
 
             def fmt_num(v):
                 if isinstance(v, float) and v.is_integer():
@@ -2387,6 +2352,379 @@ class IOMixin:
                 pass
 
         ttk.Button(pick, text=tr.t('excel.apply'),
-                    command=proceed).pack(pady=10)
+                   command=proceed).pack(pady=10)
         pick.bind('<Return>', lambda e: proceed())
         pick.bind('<Escape>', lambda e: pick.destroy())
+
+    def _sympy_transform(self, operation: str):
+        """Применяет символьное преобразование к формуле в поле ввода."""
+        try:
+            import sympy as sp
+        except ImportError:
+            messagebox.showerror(
+                tr.t('msg.error'),
+                "Требуется SymPy:\n  pip install sympy")
+            return
+
+        # Берём формулу из активного поля (в зависимости от режима)
+        if self.gen_mode_var.get() == "cartesian":
+            expr_str = self.gen_expr.get().strip()
+        elif self.gen_mode_var.get() == "parametric":
+            expr_str = self.gen_expr_x.get().strip()
+        elif self.gen_mode_var.get() == "polar":
+            expr_str = self.gen_expr_polar.get().strip()
+        else:
+            return
+
+        if not expr_str:
+            return
+
+        # Определяем переменную (x, t или theta)
+        var_name = 'x'
+        if self.gen_mode_var.get() == "parametric":
+            var_name = 't'
+        elif self.gen_mode_var.get() == "polar":
+            var_name = 'theta'
+
+        var = sp.Symbol(var_name)
+
+        # Словарь функций, понятных SymPy (включая русские имена)
+        sympy_locals = {
+            'sin': sp.sin, 'cos': sp.cos, 'tan': sp.tan,
+            'exp': sp.exp, 'log': sp.log, 'sqrt': sp.sqrt,
+            'abs': sp.Abs, 'pi': sp.pi, 'e': sp.E,
+            var_name: var
+        }
+
+        try:
+            expr = sp.sympify(expr_str, locals=sympy_locals)
+            if operation == 'simplify':
+                result = sp.simplify(expr)
+            elif operation == 'diff':
+                result = sp.diff(expr, var)
+            elif operation == 'integrate':
+                result = sp.integrate(expr, var)
+            elif operation == 'expand':
+                result = sp.expand(expr)
+            else:
+                return
+        except Exception as e:
+            messagebox.showerror(
+                "Ошибка SymPy",
+                f"Не удалось преобразовать выражение:\n{e}")
+            return
+
+        # Возвращаем строку обратно в поле
+        result_str = str(result).replace('**', '**')
+        if self.gen_mode_var.get() == "cartesian":
+            self.gen_expr.delete(0, tk.END)
+            self.gen_expr.insert(0, result_str)
+        elif self.gen_mode_var.get() == "parametric":
+            self.gen_expr_x.delete(0, tk.END)
+            self.gen_expr_x.insert(0, result_str)
+        elif self.gen_mode_var.get() == "polar":
+            self.gen_expr_polar.delete(0, tk.END)
+            self.gen_expr_polar.insert(0, result_str)
+
+        self._show_history(
+            f"SymPy: {operation} → {result_str[:50]}")
+
+    def _generate_random_data(self):
+        """Генерирует случайные данные для выбранного типа графика."""
+        try:
+            n = int(self.rnd_n_var.get())
+        except ValueError:
+            messagebox.showerror(tr.t('msg.error'), tr.t('msg.bad_params'))
+            return
+
+        if n < 1:
+            return
+
+        dist = self.rnd_dist_var.get()
+
+        # Если в UI остались поля параметров (p1, p2, seed) — берем их,
+        # иначе используем дефолтные значения.
+        p1 = 0.0
+        p2 = 1.0
+        if hasattr(self, 'rnd_p1_var'):
+            try:
+                p1 = float(self.rnd_p1_var.get().replace(',', '.'))
+            except ValueError:
+                pass
+        if hasattr(self, 'rnd_p2_var'):
+            try:
+                p2 = float(self.rnd_p2_var.get().replace(',', '.'))
+            except ValueError:
+                pass
+
+        if hasattr(self, 'rnd_seed_var') and self.rnd_seed_var.get().strip():
+            try:
+                np.random.seed(int(self.rnd_seed_var.get()))
+            except ValueError:
+                pass
+
+        # Генерируем значения
+        def gen_values(count):
+            if dist == "normal":
+                return np.random.normal(p1, p2, count)
+            if dist == "uniform":
+                return np.random.uniform(p1, p2, count)
+            if dist == "exponential":
+                scale = p1 if p1 > 0 else 1.0
+                return np.random.exponential(scale, count) + p2
+            if dist == "poisson":
+                lam = p1 if p1 > 0 else 1.0
+                return np.random.poisson(lam, count)
+            if dist == "integers":
+                lo, hi = int(p1), int(p2)
+                if hi < lo:
+                    lo, hi = hi, lo
+                return np.random.randint(lo, hi + 1, count)
+            return np.random.normal(p1, p2, count)
+
+        # Определяем форму данных (2D, 3D или матрица)
+        shape = '2d'
+        if hasattr(self, '_get_rnd_shape'):
+            shape = self._get_rnd_shape()
+
+        if shape == '2d':
+            y = gen_values(n)
+            x = np.arange(n)
+            self.entry_x.delete(0, tk.END)
+            self.entry_x.insert(0, ", ".join(map(str, x.tolist())))
+            self.entry_y.delete(0, tk.END)
+            self.entry_y.insert(0, ", ".join(map(str, np.round(y, 4).tolist())))
+
+            if "3D" not in tr.find_type_by_display(self.type_var.get()):
+                self.type_var.set(tr.type_name("Линия"))
+                self._on_type_change()
+
+            self._show_history(tr.t('hist.generated_random', count=n, dist=dist))
+            self.notebook.select(0)
+
+        elif shape == '3d':
+            x = np.arange(n)
+            y = gen_values(n)
+            z = gen_values(n)
+            self.entry_x.delete(0, tk.END)
+            self.entry_x.insert(0, ", ".join(map(str, x.tolist())))
+            self.entry_y.delete(0, tk.END)
+            self.entry_y.insert(0, ", ".join(map(str, np.round(y, 4).tolist())))
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, ", ".join(map(str, np.round(z, 4).tolist())))
+
+            t_cur = tr.find_type_by_display(self.type_var.get())
+            if "3D" not in t_cur:
+                self.type_var.set(tr.type_name("3D Линия"))
+                self._on_type_change()
+
+            self._show_history(tr.t('hist.generated_random_3d', count=n, dist=dist))
+            self.notebook.select(0)
+
+        elif shape == '3d_grid':
+            try:
+                gn = int(self.rnd_grid_n_var.get()) if hasattr(self, 'rnd_grid_n_var') else 15
+                gm = int(self.rnd_grid_m_var.get()) if hasattr(self, 'rnd_grid_m_var') else 15
+            except (ValueError, tk.TclError):
+                gn, gm = 15, 15
+
+            gn = max(3, gn)
+            gm = max(3, gm)
+
+            xg = (np.linspace(p1, p2, gn) if p2 != p1 else np.arange(gn, dtype=float))
+            yg = (np.linspace(p1, p2, gm) if p2 != p1 else np.arange(gm, dtype=float))
+
+            total = gn * gm
+            z_flat = gen_values(total)
+            Z = z_flat.reshape(gm, gn)
+
+            self.entry_x.delete(0, tk.END)
+            self.entry_x.insert(0, ", ".join(map(str, np.round(xg, 4).tolist())))
+            self.entry_y.delete(0, tk.END)
+            self.entry_y.insert(0, ", ".join(map(str, np.round(yg, 4).tolist())))
+
+            rows = [" ".join(map(str, np.round(row, 4).tolist())) for row in Z]
+            self.entry_z.delete(0, tk.END)
+            self.entry_z.insert(0, " ; ".join(rows))
+
+            t_cur = tr.find_type_by_display(self.type_var.get())
+            if t_cur not in ("3D Поверхность", "3D Сетка"):
+                self.type_var.set(tr.type_name("3D Поверхность"))
+                self._on_type_change()
+
+            self._show_history(tr.t('hist.generated_random_grid', n=gn, m=gm, dist=dist))
+            self.notebook.select(0)
+
+    def _ai_generate_formula(self):
+        """Запрашивает формулу у локального ИИ (Ollama / LM Studio)
+        по текстовому описанию и подставляет её в поле генератора.
+        """
+        import json
+        import urllib.request
+
+        # Безопасное получение текста запроса
+        prompt_var = getattr(self, 'ai_prompt_var', None)
+        if prompt_var is None:
+            messagebox.showerror(
+                "ИИ-помощник",
+                "Поле описания не найдено. Перезапустите приложение.")
+            return
+        prompt_text = prompt_var.get().strip()
+        if not prompt_text:
+            messagebox.showinfo(
+                "ИИ-помощник",
+                "Опишите словами, какой график вы хотите построить.")
+            return
+
+        # Определяем сервер: Ollama (11434) или LM Studio (1234)
+        endpoint = None
+        payload = None
+
+        # --- 1. Пробуем Ollama ---
+        try:
+            urllib.request.urlopen(
+                "http://localhost:11434/", timeout=1)
+            model_name = "qwen2.5-coder:1.5b"
+            model_var = getattr(self, 'ai_model_var', None)
+            if model_var is not None and model_var.get().strip():
+                model_name = model_var.get().strip()
+            endpoint = "http://localhost:11434/api/generate"
+            payload = {
+                "model": model_name,
+                "prompt": (
+                    "You are a math assistant for a graph editor. "
+                    "Generate ONLY a Python expression using variable "
+                    "'x' for the following description. "
+                    "Do not include explanations, markdown, or code "
+                    "blocks. Use ** for powers, sqrt() for square root, "
+                    "and standard function names like sin, cos, exp, log. "
+                    f"Description: {prompt_text}"
+                ),
+                "stream": False,
+            }
+        except Exception:
+            pass
+
+        # --- 2. Пробуем LM Studio (OpenAI-совместимый API) ---
+        if endpoint is None:
+            try:
+                urllib.request.urlopen(
+                    "http://localhost:1234/v1/models", timeout=1)
+                endpoint = "http://localhost:1234/v1/chat/completions"
+                payload = {
+                    "model": "local-model",
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            "Generate ONLY a Python expression using "
+                            "variable 'x' for the following description. "
+                            "No explanations, no markdown, use ** for "
+                            f"powers and sqrt() for roots. {prompt_text}"
+                        )
+                    }],
+                    "temperature": 0.3,
+                }
+            except Exception:
+                pass
+
+        if endpoint is None:
+            messagebox.showerror(
+                "ИИ-помощник",
+                "Локальный ИИ-сервер не найден.\n\n"
+                "Запустите Ollama (команда «ollama serve») "
+                "или LM Studio с включённым локальным сервером.")
+            return
+
+        # --- 3. Отправляем запрос ---
+        self.status_var.set("Запрос к локальному ИИ...")
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+        try:
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+
+            # Извлекаем ответ
+            if "response" in result:            # Ollama
+                answer = result["response"]
+            elif "choices" in result:           # LM Studio / OpenAI
+                answer = result["choices"][0]["message"]["content"]
+            else:
+                answer = str(result)
+
+            # Очищаем от markdown и лишних пробелов
+            answer = (answer
+                      .replace('```python', '')
+                      .replace('```', '')
+                      .replace('`', '')
+                      .strip())
+
+            if '\n' in answer:
+                lines = [ln.strip() for ln in answer.split('\n')
+                         if ln.strip()]
+                answer = lines[0] if lines else answer
+            for prefix in ("y =", "y=", "f(x) =", "f(x)="):
+                if answer.startswith(prefix):
+                    answer = answer[len(prefix):].strip()
+
+            if not answer:
+                raise ValueError("Модель вернула пустой ответ")
+
+            # Переключаемся на режим "Декартова" и подставляем
+            if hasattr(self, 'gen_mode_var'):
+                self.gen_mode_var.set("cartesian")
+            if hasattr(self, 'frame_cartesian'):
+                self.frame_cartesian.pack(fill=tk.X, pady=5)
+            if hasattr(self, 'frame_parametric'):
+                self.frame_parametric.pack_forget()
+            if hasattr(self, 'frame_polar'):
+                self.frame_polar.pack_forget()
+
+            if hasattr(self, 'gen_expr'):
+                self.gen_expr.delete(0, tk.END)
+                self.gen_expr.insert(0, answer)
+
+            self.status_var.set("ИИ: формула сгенерирована")
+            self._show_history(f"ИИ: {answer[:60]}")
+
+            # Обновляем ползунки, если есть переменные a/b/c
+            if hasattr(self, '_update_gen_params'):
+                try:
+                    self._update_gen_params()
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.status_var.set("Ошибка ИИ-помощника")
+            messagebox.showerror(
+                "Ошибка ИИ",
+                f"Не удалось получить ответ:\n{e}")
+
+    def _get_rnd_shape(self):
+        """Возвращает выбранную форму случайных данных."""
+        if not hasattr(self, 'rnd_shape_var'):
+            return '2d'
+        text = self.rnd_shape_var.get()
+        if text == tr.t('gen.rnd_shape_3d'):
+            return '3d'
+        if text == tr.t('gen.rnd_shape_3d_grid'):
+            return '3d_grid'
+        return '2d'
+
+    def _on_rnd_shape_change(self, event=None):
+        """Показывает/скрывает поля размера сетки при выборе 3D-сетки."""
+        if not hasattr(self, 'rnd_grid_frame'):
+            return
+        if self._get_rnd_shape() == '3d_grid':
+            # Пакуем под выпадающим списком
+            self.rnd_grid_frame.pack(fill=tk.X, pady=2)
+        else:
+            self.rnd_grid_frame.pack_forget()

@@ -1,4 +1,4 @@
-GraphEditor Pro v1.5.0
+GraphEditor Pro v1.6.0
 ===========================================================
 project:
     assets:
@@ -56,6 +56,8 @@ project:
             _dialogs.py;
             _menu.py;
             _tree.py;
+        web:
+            index.html
         __init__.py;
         animations.py;
         autosave.py;
@@ -77,6 +79,7 @@ project:
     .gitignore;
     .python-version;
     app.pyw;
+    CHANGELOG.md;
     EXAMPLES.txt;
     LICENSE.txt;
     PROJECT.txt;

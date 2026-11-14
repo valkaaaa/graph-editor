@@ -2,7 +2,7 @@
 
 **Продвинутый графический редактор для научной визуализации с поддержкой 100+ типов графиков, анимаций, тем и мультиязычного интерфейса.**
 
-Версия 1.5.0
+Версия 1.6.0
 
 [Сайт](https://ваш-домен) · [Releases](https://github.com/valkaaaa/graph-editor/releases) · [Issues](https://github.com/valkaaaa/graph-editor/issues)
 

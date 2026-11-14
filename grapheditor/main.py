@@ -89,11 +89,8 @@ class AdvancedGraphEditorApp(
     AutoThemeMixin,
     SoundMixin,
 ):
-    def __init__(self, root, geometry="1250x1250", title=None):
-        try:
-            from grapheditor import __version__
-        except ImportError:
-            __version__ = "1.5.0"
+    def __init__(self, root, geometry="1250x1450", title=None):
+        from grapheditor import __version__
         if title is None:
             title = f"GraphEditor Pro v{__version__}"
         self.root = root
@@ -228,6 +225,20 @@ class AdvancedGraphEditorApp(
 
         # ---------- Звуки ------------
         self._init_sounds()
+
+        # ---------- Генератор ----------
+        self.gen_mode_var = tk.StringVar(value="cartesian")
+        self.gen_template_var = tk.StringVar()
+
+        # ---------- ИИ-помощник ----------
+        self.ai_prompt_var = tk.StringVar()
+        self.ai_model_var = tk.StringVar(value="qwen2.5-coder:1.5b")
+
+        # ---------- Случайные данные ----------
+        self.rnd_shape_var = tk.StringVar(value=tr.t('gen.rnd_shape_2d'))
+        self.rnd_p1_var = tk.StringVar(value="0")
+        self.rnd_p2_var = tk.StringVar(value="1")
+        self.rnd_seed_var = tk.StringVar(value="")
 
         # ---------- Сборка ----------
         self._build_ui()
